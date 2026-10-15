@@ -1,0 +1,18 @@
+{
+  "name": "ats-network-node",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Resumable ATS audiobook storage and public discovery node",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "check": "node --check src/server.mjs",
+    "verify:node": "node scripts/verify-node.mjs",
+    "verify:prepare": "node scripts/verify-node.mjs prepare",
+    "verify:resume": "node scripts/verify-node.mjs resume"
+  },
+  "license": "MIT"
+}

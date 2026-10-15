@@ -1,0 +1,4 @@
+{$NODE_DOMAIN} {
+    reverse_proxy node:8787
+    header X-Content-Type-Options nosniff
+}

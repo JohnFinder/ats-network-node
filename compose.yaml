@@ -1,0 +1,31 @@
+services:
+  node:
+    build: .
+    restart: unless-stopped
+    init: true
+    ports:
+      - "127.0.0.1:${NODE_PORT:-8787}:8787"
+    environment:
+      NODE_PORT: "8787"
+      NODE_DATA_DIR: /data
+      NODE_PUBLIC_URL: ${NODE_PUBLIC_URL:-http://127.0.0.1:8787}
+      NODE_MAX_FILE_BYTES: ${NODE_MAX_FILE_BYTES:-1073741824}
+      NODE_OWNER_QUOTA_BYTES: ${NODE_OWNER_QUOTA_BYTES:-10737418240}
+      NODE_TOTAL_QUOTA_BYTES: ${NODE_TOTAL_QUOTA_BYTES:-107374182400}
+      NODE_MAX_ENTRIES: ${NODE_MAX_ENTRIES:-50000}
+      NODE_MAX_OWNER_ENTRIES: ${NODE_MAX_OWNER_ENTRIES:-1000}
+      NODE_UPLOAD_TTL_HOURS: ${NODE_UPLOAD_TTL_HOURS:-168}
+      NODE_ADMIN_PUBLIC_KEYS: ${NODE_ADMIN_PUBLIC_KEYS:-}
+      NODE_PROVIDER_ADDRESS: ${NODE_PROVIDER_ADDRESS:-}
+    volumes:
+      - node-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 512m
+    cpus: 2
+    pids_limit: 128
+volumes:
+  node-data:

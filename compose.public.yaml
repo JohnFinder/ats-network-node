@@ -1,0 +1,26 @@
+# Explicit public deployment. Requires DNS, domain, ports80/443 and a funded operator.
+services:
+  node:
+    environment:
+      NODE_PUBLIC_URL: https://${NODE_DOMAIN:?Set NODE_DOMAIN in .env}
+  proxy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    init: true
+    environment:
+      NODE_DOMAIN: ${NODE_DOMAIN:?Set NODE_DOMAIN in .env}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      node:
+        condition: service_healthy
+    mem_limit: 256m
+volumes:
+  caddy-data:
+  caddy-config:

@@ -1,0 +1,36 @@
+# Local acceptance chain ONLY. RPC is bound to loopback; dev keys have no value.
+services:
+  chain:
+    build: ./contracts
+    image: ats-network-contracts:local
+    init: true
+    ports:
+      - "127.0.0.1:${CHAIN_PORT:-18545}:8545"
+    environment:
+      CHAIN_LISTEN: 0.0.0.0
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8545',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'eth_chainId',params:[]})}).then(r=>r.json()).then(v=>process.exit(v.result==='0x539'?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    mem_limit: 512m
+    cpus: 2
+  verify-chain:
+    image: ats-network-contracts:local
+    build: ./contracts
+    init: true
+    depends_on:
+      chain:
+        condition: service_healthy
+      node:
+        condition: service_healthy
+    environment:
+      ATS_CHAIN_RPC: http://chain:8545
+      NODE_URL: http://node:8787
+      NODE_RESOURCE_ID: ${NODE_RESOURCE_ID:-}
+      EXPECTED_NODE_ID: ${EXPECTED_NODE_ID:-}
+    command: ["npm", "run", "verify:local"]
+    volumes:
+      - contract-artifacts:/contracts/artifacts
+volumes:
+  contract-artifacts:
