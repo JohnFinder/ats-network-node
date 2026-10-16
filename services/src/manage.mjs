@@ -1,4 +1,4 @@
-import { BrowserProvider, parseUnits, formatUnits } from '/wallet/ethers.js';
+import { BrowserProvider, Interface, parseUnits, formatUnits } from '/wallet/ethers.js';
 const $ = name => document.querySelector(`#${name}`), status = $('status'), details = $('details'), choices = $('operation'), preview = $('preview'), execute = $('execute');
 let network, token, operations, selected, plan;
 function show(error) { status.textContent = error.shortMessage ?? error.message ?? String(error); }
@@ -27,12 +27,32 @@ function values() {
     return field.value.trim();
   });
 }
+
+async function accountSummary() {
+  const fingerprint = new URL(location.href).searchParams.get('publisher');
+  if (!/^[0-9a-f]{64}$/.test(fingerprint ?? '')) return;
+  try {
+    const response = await fetch(`/v2/account/${fingerprint}`); if (!response.ok) return;
+    const account = await response.json(); $('account').replaceChildren();
+    const heading = document.createElement('h2'); heading.textContent = 'Your storage orders'; $('account').append(heading);
+    const intro = document.createElement('p'); intro.textContent = account.active && account.edProofVerified ? `Verified wallet ${account.wallet}` : 'Connect and confirm your wallet binding in ATS first.'; $('account').append(intro);
+    for (const order of account.orders ?? []) {
+      const line = document.createElement('p');
+      line.textContent = `Order ${order.id} · ${order.closed ? 'Closed' : 'Active'} · Provider ${order.provider} · Prepaid ${formatUnits(order.amount,token.decimals)} ${token.symbol} · Unsettled ${formatUnits(order.remaining,token.decimals)} ${token.symbol}`;
+      const copy = document.createElement('button'); copy.textContent = 'Copy order number for ATS'; copy.addEventListener('click',()=>navigator.clipboard.writeText(order.id).catch(show)); line.append(' ',copy); $('account').append(line);
+      for (const settlement of (account.rewards ?? []).filter(value=>value.orderId===order.id)) {
+        const record = document.createElement('p'); record.textContent = `Period ${settlement.periodIndex}: paid to provider ${formatUnits(settlement.paid,token.decimals)} ${token.symbol}; refunded to requester ${formatUnits(settlement.refunded,token.decimals)} ${token.symbol}`; $('account').append(record);
+      }
+    }
+  } catch(error) { show(error); }
+}
+
 async function load() {
   const response = await fetch('/v2/wallet-operations'); if (!response.ok) throw new Error('Network unavailable');
   const result = await response.json(); network = result.network; token = result.token; operations = result.operations;
   $('network').textContent = `Network ${network.chainId} · ${token.symbol} · Token contract ${token.address}`;
   for (const operation of operations) { const option = document.createElement('option'); option.value = operation.id; option.textContent = operation.label; choices.append(option); }
-  choices.addEventListener('change', select); select();
+  choices.addEventListener('change', select); select(); await accountSummary();
 }
 function select() { selected = operations.find(o => o.id === choices.value); $('explanation').textContent = selected.explanation; setFields(selected.example); details.textContent = ''; $('review').textContent = ''; execute.disabled = true; plan = null; }
 $('import').addEventListener('change', async event => {
@@ -69,7 +89,12 @@ execute.addEventListener('click', async () => {
       const blob=new Blob([JSON.stringify(voucher,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download='ats-signed-storage-quote.json';link.textContent='Save signed quote';$('review').append(link);setTimeout(()=>URL.revokeObjectURL(url),60000);
       status.textContent='Quote signed. Save and share it with the requester. No token transfer occurred.';return;
     }
-    const transaction=await signer.sendTransaction({to:plan.to,data:plan.data,value:0});status.textContent=`Submitted ${transaction.hash}. Waiting for confirmation…`;await transaction.wait();status.textContent=`Confirmed ${transaction.hash}.`;
+    const transaction=await signer.sendTransaction({to:plan.to,data:plan.data,value:0});status.textContent=`Submitted ${transaction.hash}. Waiting for confirmation…`;const receipt=await transaction.wait();status.textContent=`Confirmed ${transaction.hash}.`;
+    if(selected.id==='storage.openOrder') {
+      const events=new Interface(['event OrderOpened(uint256 indexed orderId,address indexed requester,address indexed provider,bytes32 publicationId,bytes32 archiveHash,uint64 start,uint64 end,uint64 period,uint256 amount,bytes32 quoteHash)']);
+      for(const log of receipt.logs) if(log.address.toLowerCase()===network.contracts.storage.address.toLowerCase()) { try { const event=events.parseLog(log); if(event?.name==='OrderOpened')status.textContent=`Storage order ${event.args.orderId} is funded. Return to the completed upload in ATS and confirm this order number to activate the node retention receipt.`; } catch {} }
+    }
+    await accountSummary();
   } catch(error){show(error);}finally{plan=null;execute.disabled=true;}
 });
 load().catch(show);

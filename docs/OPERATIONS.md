@@ -22,7 +22,7 @@ Watch `/health`, `/v1/stats`, `/v1/mesh/status` and service `/v2/network`. Alert
 
 ## Chain and spending
 
-Deploy the V2 contracts using an explicit reviewed chain/RPC and a secret key file. The deployment manifest pins chain ID, addresses, deployment height and runtime bytecode; indexers refuse mismatches. Each observer has an independently controlled, funded wallet, a separate volume and a configured committee role. A local threshold committee remains a trust model, not consensus about physical replicas. Providers cannot act as their own observer.
+Deploy the V2 contracts using an explicit reviewed chain/RPC and a deployer secret injected through `ATS_DEPLOYER_PRIVATE_KEY` by the operator secret manager. Observer/coordinator keys use separate mounted secret files. The deployment manifest pins chain ID, addresses, deployment height and runtime bytecode; indexers refuse mismatches. Each observer has an independently controlled, funded wallet, a separate volume and a configured committee role. A local threshold committee remains a trust model, not consensus about physical replicas. Providers cannot act as their own observer.
 
 The ATS wallet portal supports explicit user authorization. Device Ed25519 proof and EVM typed signature must agree, and confirmed contract state is checked. Binding/publication does not approve token spending. Storage, staking and funded rewards require separate explicit wallet transactions. Quotes have chain/market/nonce/expiry scope; retain copies of the accepted terms. No download count mints tokens. No token exchange value is promised.
 
