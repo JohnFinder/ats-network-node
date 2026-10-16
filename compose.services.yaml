@@ -1,0 +1,77 @@
+# Operator overlay. Configure a reviewed deployment manifest and explicit RPC.
+# Example: docker compose -f compose.yaml -f compose.public.yaml -f compose.services.yaml up -d --build
+services:
+  services:
+    build: ./services
+    image: ats-network-services:local
+    init: true
+    restart: unless-stopped
+    environment: &service-environment
+      SERVICE_RPC_URL: ${SERVICE_RPC_URL:?Set an explicit chain RPC URL}
+      SERVICE_CHAIN_ID: ${SERVICE_CHAIN_ID:?Set the deployment chain ID}
+      SERVICE_DEPLOYMENT_MANIFEST: /deployment/manifest.json
+      SERVICE_PUBLIC_URL: ${SERVICE_PUBLIC_URL:?Set the public HTTPS services origin}
+      SERVICE_CONFIRMATIONS: ${SERVICE_CONFIRMATIONS:-12}
+      SERVICE_APPROVED_NODES: ${SERVICE_APPROVED_NODES:-[]}
+      SERVICE_APPROVED_INDEXERS: ${SERVICE_APPROVED_INDEXERS:-[]}
+      SERVICE_MAX_AUDIT_BYTES: ${SERVICE_MAX_AUDIT_BYTES:-1073741824}
+      SERVICE_DATA_DIR: /data
+    volumes:
+      - services-data:/data
+      - ${SERVICE_MANIFEST_FILE:?Set the absolute reviewed manifest path}:/deployment/manifest.json:ro
+    read_only: true
+    tmpfs: ["/tmp:size=64m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 512m
+    cpus: 1
+  observer:
+    profiles: [observer]
+    build: ./services
+    image: ats-network-services:local
+    init: true
+    restart: unless-stopped
+    environment:
+      <<: *service-environment
+      SERVICE_OBSERVER_KEY_FILE: /run/secrets/observer_key
+      SERVICE_SIGNING_KEY_FILE: /run/secrets/observer_identity
+    secrets:
+      - observer_key
+      - observer_identity
+    volumes:
+      - observer-data:/data
+      - ${SERVICE_MANIFEST_FILE:?Set the absolute reviewed manifest path}:/deployment/manifest.json:ro
+    read_only: true
+    tmpfs: ["/tmp:size=64m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 512m
+  settlement:
+    profiles: [settlement]
+    build: ./services
+    image: ats-network-services:local
+    init: true
+    restart: unless-stopped
+    environment:
+      <<: *service-environment
+      SERVICE_SETTLEMENT_KEY_FILE: /run/secrets/settlement_key
+    secrets: [settlement_key]
+    volumes:
+      - settlement-data:/data
+      - ${SERVICE_MANIFEST_FILE:?Set the absolute reviewed manifest path}:/deployment/manifest.json:ro
+    read_only: true
+    tmpfs: ["/tmp:size=64m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 512m
+secrets:
+  observer_key:
+    file: ${SERVICE_OBSERVER_KEY_FILE:-./secrets/observer.key}
+  observer_identity:
+    file: ${SERVICE_OBSERVER_IDENTITY_FILE:-./secrets/observer.der}
+  settlement_key:
+    file: ${SERVICE_SETTLEMENT_KEY_FILE:-./secrets/settlement.key}
+volumes:
+  services-data:
+  observer-data:
+  settlement-data:

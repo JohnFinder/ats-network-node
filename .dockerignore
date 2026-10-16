@@ -1,7 +1,5 @@
-.git
-.env
-data
-node_modules
-*.log
-contracts/out
-contracts/cache
+*
+!Dockerfile
+!package.json
+!src
+!src/**

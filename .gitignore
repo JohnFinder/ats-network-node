@@ -7,3 +7,14 @@ artifacts/
 .deployments/
 *.log
 .DS_Store
+
+secrets/
+receipts/
+plans/
+*.key
+*.pem
+*.der
+*.sqlite
+*.sqlite-*
+*.tar.gz
+*.age

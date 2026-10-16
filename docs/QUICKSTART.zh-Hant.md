@@ -56,10 +56,26 @@ docker compose -f compose.yaml -f compose.chain.yaml run --rm verify-chain
 
 本機鏈 chainId為1337，預設 RPC只綁定127.0.0.1:18545。合約驗證會新部署固定供給測試代幣，驗證抵押、預付服務、贊助任務、延遲與防重複獎勵。該代幣無價值，不是正式發行，不應充值真實資產。
 
-## 現階段與下一步
+## 多節點、錢包與獎勵
 
-已實作：單節點儲存、上載續傳、公共列表、App整合、本機鏈獎勵會計與部署工具。
+V2 已加入釘選節點身分的公開目錄交換、副本建立／修補與來源回退。先啟動節點取得指紋，核對後才加入 `NODE_PEERS`，公共環境使用 HTTPS。`compose.full.yaml` 是三節點開發示範，不能原樣當成公共部署。
 
-正式上線前仍需：公共主機與網域、實際節點維護者與預算、選定公鏈、獨立合約審計、多節點觀測及錢包綁定。首次公開發布不會自動在真實區塊鏈登記或領幣；目前只有可重現的本機鏈驗證。詳細階段見 `docs/PLAN.md`，安全邊界見 `docs/THREAT-MODEL.md`。
+區塊鏈服務與觀測器使用 `compose.services.yaml`，需提供已審核部署清單、RPC、節點指紋與各自密鑰／資料卷。App 的「錢包與收益」可建立雙證明綁定、開啟外部錢包登記與操作頁。外部錢包每次確認交易，不會把私鑰交給節點。營運者可用 `src/bind-wallet.mjs` 在節點內簽署綁定意向，無需複製私鑰。
 
-也可以直接執行 `./scripts/verify-docker.sh`。它會建立獨立容器、產生測試檔、重啟驗證續傳，再串接本機鏈結算；預設完成後只清除此驗證建立的容器和資料卷。需要 Docker/Compose 與 Node.js24以上，預設驗證埠為18788及18546。
+儲存費依已預付期間與觀測結果結算，失敗部分退款；爭議會暫停結算等待解決。發布者任務可拆為分別出資的里程碑，保存獎勵可指定累積 30 天成功保存才解鎖。下載數與熱度不直接產生獎勵。
+
+建議驗證順序：
+
+```sh
+./scripts/verify-docker.sh
+./scripts/verify-mesh-docker.sh
+./scripts/verify-backup-docker.sh
+npm ci --ignore-scripts --prefix services
+./scripts/verify-services-docker.sh
+npm ci --ignore-scripts --prefix storage
+npm --prefix storage run verify
+```
+
+驗證使用合成資料、本機測試鏈與無價值代幣，不操作個人文檔或正式資金。Filecoin 介面已提供，但實際付費上傳和證明週期需要外部資金及另行驗收。正式公共節點、獨立故障域、外部審計與內容授權審查仍是上線條件。
+
+完整流程見 [操作手冊](OPERATIONS.md)、[開發階段](PLAN.md)、[合約](../contracts/README.md)、[獨立服務](../services/README.md) 與 [Filecoin 介面](../storage/README.md)。

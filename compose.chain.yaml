@@ -29,7 +29,7 @@ services:
       NODE_URL: http://node:8787
       NODE_RESOURCE_ID: ${NODE_RESOURCE_ID:-}
       EXPECTED_NODE_ID: ${EXPECTED_NODE_ID:-}
-    command: ["npm", "run", "verify:local"]
+    command: ["sh", "-c", "npm run verify:local && node scripts/verify-publisher-vesting.mjs"]
     volumes:
       - contract-artifacts:/contracts/artifacts
 volumes:

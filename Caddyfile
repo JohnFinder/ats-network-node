@@ -1,4 +1,10 @@
 {$NODE_DOMAIN} {
-    reverse_proxy node:8787
+    @operatorServices path /v2/* /wallet /wallet/*
+    handle @operatorServices {
+        reverse_proxy services:8790
+    }
+    handle {
+        reverse_proxy node:8787
+    }
     header X-Content-Type-Options nosniff
 }

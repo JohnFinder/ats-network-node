@@ -1,0 +1,18 @@
+{
+  "name": "@ats-network/operator-services",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "start": "node src/main.mjs",
+    "check": "node --check src/main.mjs && node --check src/chain.mjs && node --check src/observer.mjs && node --check src/common.mjs && node --check src/catalog.mjs && node --check src/settlement.mjs && node --check src/wallet.mjs && node --check src/operations.mjs && node --check src/manage.mjs",
+    "verify": "node scripts/verify.mjs"
+  },
+  "dependencies": {
+    "ethers": "6.15.0"
+  },
+  "license": "MIT"
+}

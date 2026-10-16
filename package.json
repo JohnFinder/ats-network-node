@@ -1,6 +1,6 @@
 {
   "name": "ats-network-node",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "Resumable ATS audiobook storage and public discovery node",
@@ -9,7 +9,7 @@
   },
   "scripts": {
     "start": "node src/server.mjs",
-    "check": "node --check src/server.mjs",
+    "check": "node --check src/server.mjs && node --check src/mesh.mjs && node --check src/bind-wallet.mjs",
     "verify:node": "node scripts/verify-node.mjs",
     "verify:prepare": "node scripts/verify-node.mjs prepare",
     "verify:resume": "node scripts/verify-node.mjs resume"

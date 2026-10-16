@@ -1,13 +1,19 @@
 {
   "name": "@ats-network/contracts",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
     "compile": "node scripts/compile.mjs",
     "chain": "node scripts/start-local-chain.mjs",
     "deploy:local": "node scripts/deploy-local.mjs",
-    "verify:local": "node scripts/verify-local.mjs"
+    "verify:local": "node scripts/verify-v2-local.mjs",
+    "verify:legacy": "node scripts/verify-local.mjs",
+    "deploy:v2:local": "node scripts/deploy-v2-local.mjs",
+    "deploy:plan": "node scripts/deploy-v2.mjs",
+    "deploy:configured": "node scripts/deploy-v2.mjs --execute",
+    "identity:binding": "node scripts/binding.mjs",
+    "verify:vesting": "node scripts/verify-publisher-vesting.mjs"
   },
   "dependencies": {
     "@openzeppelin/contracts": "5.4.0",

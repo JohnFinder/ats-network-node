@@ -1,0 +1,56 @@
+# Isolated local-development mesh. HTTP service names and chain1337 are NOT production settings.
+x-node: &mesh-node
+  build: .
+  init: true
+  restart: unless-stopped
+  read_only: true
+  tmpfs: ["/tmp:rw,noexec,nosuid,size=64m"]
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  mem_limit: 512m
+  cpus: 2
+  pids_limit: 128
+x-env: &mesh-env
+  NODE_PORT: "8787"
+  NODE_DATA_DIR: /data
+  NODE_ALLOW_PRIVATE_PEERS: "1"
+  NODE_MESH_INTERVAL_SECONDS: "2"
+  NODE_DESIRED_REPLICAS: "3"
+  NODE_MAX_FILE_BYTES: "67108864"
+  NODE_TOTAL_QUOTA_BYTES: "536870912"
+  NODE_REPLICA_QUOTA_BYTES: "268435456"
+services:
+  node-a:
+    <<: *mesh-node
+    ports: ["127.0.0.1:${MESH_A_PORT:-18871}:8787"]
+    environment:
+      <<: *mesh-env
+      NODE_PUBLIC_URL: http://node-a:8787
+      NODE_PEERS: ${MESH_A_PEERS:-[]}
+      NODE_ADMIN_PUBLIC_KEYS: ${MESH_ADMIN_ID:-}
+      NODE_SETTLEMENT_PUBLIC_KEYS: ${MESH_SETTLEMENT_ID:-}
+    volumes: ["mesh-a:/data"]
+  node-b:
+    <<: *mesh-node
+    ports: ["127.0.0.1:${MESH_B_PORT:-18872}:8787"]
+    environment:
+      <<: *mesh-env
+      NODE_PUBLIC_URL: http://node-b:8787
+      NODE_PEERS: ${MESH_B_PEERS:-[]}
+      NODE_ADMIN_PUBLIC_KEYS: ${MESH_ADMIN_ID:-}
+      NODE_DRAIN: ${MESH_B_DRAIN:-0}
+    volumes: ["mesh-b:/data"]
+  node-c:
+    <<: *mesh-node
+    ports: ["127.0.0.1:${MESH_C_PORT:-18873}:8787"]
+    environment:
+      <<: *mesh-env
+      NODE_PUBLIC_URL: http://node-c:8787
+      NODE_PEERS: ${MESH_C_PEERS:-[]}
+      NODE_ADMIN_PUBLIC_KEYS: ${MESH_ADMIN_ID:-}
+      NODE_DRAIN: ${MESH_C_DRAIN:-0}
+    volumes: ["mesh-c:/data"]
+volumes:
+  mesh-a:
+  mesh-b:
+  mesh-c:

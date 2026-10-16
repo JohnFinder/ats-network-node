@@ -1,4 +1,4 @@
-name: Verify local node and test-token accounting
+name: Verify decentralized node and funded test-token services
 on:
   push:
   pull_request:
@@ -7,11 +7,38 @@ permissions:
 jobs:
   docker-acceptance:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario: [storage-chain, mesh, backup, services]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24'
-      - name: Verify isolated Docker storage, restart and local chain
+      - name: Verify storage restart and V2 accounting
+        if: matrix.scenario == 'storage-chain'
         run: ./scripts/verify-docker.sh
+      - name: Verify signed federation, failover and repair
+        if: matrix.scenario == 'mesh'
+        run: ./scripts/verify-mesh-docker.sh
+      - name: Verify stopped-volume identity and archive recovery
+        if: matrix.scenario == 'backup'
+        run: ./scripts/verify-backup-docker.sh
+      - name: Verify independent observer processes and settlement
+        if: matrix.scenario == 'services'
+        run: |
+          npm ci --ignore-scripts --prefix services
+          ./scripts/verify-services-docker.sh
+  storage-adapter:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - run: npm ci --ignore-scripts --prefix storage
+      - run: npm --prefix storage run check
+      - run: npm --prefix storage run verify

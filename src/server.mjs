@@ -5,6 +5,7 @@ import { mkdir, readFile, writeFile, rename, rm, stat, statfs, open, chmod, read
 import { createReadStream } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
 import path from 'node:path';
+import { createMesh } from './mesh.mjs';
 
 const integer = (name, fallback, max = Number.MAX_SAFE_INTEGER) => {
   const n = Number(process.env[name] ?? fallback);
@@ -22,7 +23,7 @@ const maxOwnerEntries = integer('NODE_MAX_OWNER_ENTRIES', 1000, 100000);
 const uploadTTL = integer('NODE_UPLOAD_TTL_HOURS', 168, 8760) * 3600;
 const publicURL = new URL(process.env.NODE_PUBLIC_URL ?? `http://127.0.0.1:${port}`);
 if (publicURL.username || publicURL.password || publicURL.search || publicURL.hash || publicURL.pathname !== '/' ||
-    (publicURL.protocol !== 'https:' && !(publicURL.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(publicURL.hostname)))) {
+    (publicURL.protocol !== 'https:' && !(publicURL.protocol === 'http:' && (['127.0.0.1', 'localhost', '[::1]'].includes(publicURL.hostname) || process.env.NODE_ALLOW_PRIVATE_PEERS === '1')))) {
   throw new Error('NODE_PUBLIC_URL must be an HTTPS origin (HTTP loopback is development only)');
 }
 const adminIDs = new Set((process.env.NODE_ADMIN_PUBLIC_KEYS ?? '').split(',').filter(Boolean));
@@ -204,30 +205,36 @@ const complete = async upload => {
   }
 };
 
+const mesh = await createMesh({ db, dataDir, providerID, providerPublicKey, providerKey, publicURL, maxFile, totalQuota, maxEntries, resourceResponse, metadata });
+
 async function route(req, res) {
   const url = new URL(req.url, 'http://node.invalid');
   if (req.url.length > 4096 || url.pathname.includes('%') || url.pathname.includes('..')) throw fail(400, 'invalid_path');
   const segments = url.pathname.split('/').filter(Boolean);
+  if (await mesh.route(req, res, url, {body, parse, authenticate, json})) return;
   if (req.method === 'GET' && url.pathname === '/health') return json(res, 200, { status: 'ok', schemaVersion: 1 });
   if (req.method === 'GET' && url.pathname === '/v1/node') {
     const disk = await statfs(dataDir);
     return json(res, 200, {
-    schemaVersion: 1, providerID, publicKey: providerPublicKey.toString('base64'), providerAddress, publicURL: publicURL.origin,
-    partSize, maximumFileBytes: maxFile, capabilities: ['resumable-upload', 'public-search', 'range-download', 'signed-evidence'],
+    schemaVersion: 1, nodeVersion: '0.2.0', providerID, publicKey: providerPublicKey.toString('base64'), providerAddress, publicURL: publicURL.origin,
+    partSize, maximumFileBytes: maxFile, capabilities: ['resumable-upload', 'public-search', 'range-download', 'signed-evidence', 'signed-federation', 'public-replication', 'retention-leases'],
     rewards: { mode: 'external-attested-escrow', automaticMinting: false }
     ,storage: { configuredQuotaBytes: totalQuota, availableDiskBytes: disk.bavail * disk.bsize }
     });
   }
   if (req.method === 'POST' && url.pathname === '/v1/uploads') {
     const bytes = await body(req, 16384), owner = authenticate(req, url, bytes), value = parse(bytes), m = metadata(value);
+    if (mesh.draining) throw fail(503, 'node_draining');
+    if (m.visibility === 'public' && Object.keys(value).some(k => !['sha256','byteCount','title','summary','language','tags','visibility','encrypted'].includes(k))) throw fail(400, 'unknown_public_metadata_field');
     const ownerBytes = db.prepare("SELECT COALESCE(SUM(bytes),0) AS bytes FROM uploads WHERE owner=? AND (status='complete' OR expires>=?)").get(owner, now()).bytes;
     const totalBytes = db.prepare("SELECT COALESCE(SUM(bytes),0) AS bytes FROM uploads WHERE status='complete' OR expires>=?").get(now()).bytes;
     const pending = db.prepare("SELECT COUNT(*) AS count FROM uploads WHERE owner=? AND status='pending'").get(owner).count;
     const entries = db.prepare('SELECT COUNT(*) AS count FROM uploads').get().count;
     const ownerEntries = db.prepare('SELECT COUNT(*) AS count FROM uploads WHERE owner=?').get(owner).count;
-    if (pending >= 32 || entries >= maxEntries || ownerEntries >= maxOwnerEntries || ownerBytes + value.byteCount > ownerQuota || totalBytes + value.byteCount > totalQuota) throw fail(429, 'storage_quota_exceeded');
+    if (pending >= 32 || entries >= maxEntries || ownerEntries >= maxOwnerEntries || ownerBytes + value.byteCount > ownerQuota || totalBytes + mesh.reservedBytes() + value.byteCount > totalQuota) throw fail(429, 'storage_quota_exceeded');
     const id = randomUUID();
     db.prepare('INSERT INTO uploads(id,owner,metadata,bytes,sha,created,expires) VALUES(?,?,?,?,?,?,?)').run(id, owner, JSON.stringify(m), value.byteCount, value.sha256, now(), now() + uploadTTL);
+    mesh.recordAuth(id, mesh.proofFrom(req, url, bytes));
     try {
       const disk = await statfs(dataDir);
       const reserved = db.prepare("SELECT COALESCE(SUM(bytes),0) AS bytes FROM uploads WHERE status IN ('pending','completing') AND expires>=?").get(now()).bytes;
@@ -235,7 +242,7 @@ async function route(req, res) {
       if (disk.bavail * disk.bsize < reserved * 2 - storedParts + 16 * 1024 ** 2) throw fail(507, 'insufficient_storage');
       await mkdir(filePath('uploads', id), { mode: 0o700 });
     }
-    catch (error) { db.prepare('DELETE FROM uploads WHERE id=?').run(id); throw error; }
+    catch (error) { db.prepare('DELETE FROM publication_auth WHERE id=?').run(id); db.prepare('DELETE FROM uploads WHERE id=?').run(id); throw error; }
     return json(res, 201, uploadResponse(ownedUpload(id, owner)));
   }
   if (segments[0] === 'v1' && segments[1] === 'uploads' && uuidPattern.test(segments[2] ?? '')) {
@@ -246,6 +253,7 @@ async function route(req, res) {
     if (segments.length === 3 && req.method === 'DELETE') {
       if (upload.status !== 'pending' || busy.has(id)) throw fail(409, 'upload_busy_or_complete');
       busy.add(id);
+      db.prepare('DELETE FROM publication_auth WHERE id=?').run(id);
       db.prepare('DELETE FROM uploads WHERE id=?').run(id);
       try { await rm(filePath('uploads', id), { recursive: true, force: true }); }
       finally { busy.delete(id); }
@@ -277,13 +285,7 @@ async function route(req, res) {
     const query = url.searchParams.get('q') ?? '', sort = url.searchParams.get('sort') ?? 'recent';
     const limit = Number(url.searchParams.get('limit') ?? 30), cursor = Number(url.searchParams.get('cursor') ?? 0);
     if (query.length > 200 || !['recent', 'downloads', 'trending'].includes(sort) || !Number.isInteger(limit) || limit < 1 || limit > 100 || !Number.isSafeInteger(cursor) || cursor < 0 || cursor > 1000000) throw fail(400, 'invalid_search');
-    // JSON fields searched separately; metadata never interpolated into SQL.
-    const term = `%${query.replace(/[\\%_]/g, '\\$&')}%`;
-    const order = sort === 'downloads' ? 'r.downloads DESC,r.created DESC,r.id' : sort === 'trending' ? 'score DESC,r.created DESC,r.id' : 'r.created DESC,r.id';
-    const rows = db.prepare(`SELECT r.*,COALESCE((SELECT SUM(1.0 / (1.0 + (? - e.created) / 172800.0)) FROM download_events e WHERE e.resource=r.id AND e.created>=?),0) AS score
-      FROM resources r WHERE r.visibility='public' AND (?='' OR json_extract(r.metadata,'$.title') LIKE ? ESCAPE '\\' OR json_extract(r.metadata,'$.summary') LIKE ? ESCAPE '\\' OR json_extract(r.metadata,'$.language') LIKE ? ESCAPE '\\' OR json_extract(r.metadata,'$.tags') LIKE ? ESCAPE '\\')
-      ORDER BY ${order} LIMIT ? OFFSET ?`).all(now(), now() - 30 * 86400, query, term, term, term, term, limit + 1, cursor);
-    return json(res, 200, { items: rows.slice(0, limit).map(resourceResponse), nextCursor: rows.length > limit ? String(cursor + limit) : null });
+    return json(res, 200, mesh.catalogue(url));
   }
   if (segments[0] === 'v1' && segments[1] === 'resources' && uuidPattern.test(segments[2] ?? '')) {
     const id = segments[2];
@@ -291,6 +293,8 @@ async function route(req, res) {
       const bytes = await body(req, 1024), owner = authenticate(req, url, bytes);
       const r = db.prepare('SELECT * FROM resources WHERE id=?').get(id);
       if (!r || (r.owner !== owner && !adminIDs.has(owner))) throw fail(404, 'resource_not_found');
+      if (mesh.hasLease(id)) throw fail(409, 'active_retention_lease');
+      mesh.remove(id, r.visibility === 'public');
       db.prepare('DELETE FROM resources WHERE id=?').run(id);
       db.prepare('DELETE FROM uploads WHERE id=?').run(id);
       await rm(objectPath(id), { force: true });
@@ -429,6 +433,7 @@ const cleanup = async () => {
   }
   for (const upload of db.prepare("SELECT id FROM uploads WHERE status='pending' AND expires<?").all(now())) {
     if (busy.has(upload.id)) continue;
+    db.prepare('DELETE FROM publication_auth WHERE id=?').run(upload.id);
     db.prepare('DELETE FROM uploads WHERE id=?').run(upload.id);
     await rm(filePath('uploads', upload.id), { recursive: true, force: true });
     await rm(objectPath(upload.id), { force: true });
@@ -441,6 +446,7 @@ timer.unref();
 server.listen(port, '0.0.0.0', () => console.log(JSON.stringify({ event: 'listening', port, providerID })));
 for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => {
   clearInterval(timer);
+  mesh.close();
   server.close(() => { db.close(); process.exit(0); });
   setTimeout(() => process.exit(1), 15000).unref();
 });

@@ -27,7 +27,7 @@ The test token is fixed-supply and preminted, with no upload/download mint endpo
 
 ## Identity and privacy
 
-ATS archive/device keys use Ed25519. EVM wallets use different keys and addresses. NODE_PROVIDER_ADDRESS is a declaration only; it is not proof of control. The demo uses explicit local test roles; it must not be advertised as a production wallet binding. An anonymous name is not network anonymity: nodes observe IP connections and public chains expose transactions.
+ATS archive/device keys use Ed25519. EVM wallets use different keys and addresses. NODE_PROVIDER_ADDRESS is a declaration only; it is not proof of control. V2 requires a domain-scoped Ed25519 proof and EVM typed authorization plus confirmed state. A wallet signature alone does not prove the Ed25519 key and vice versa. Public-chain deployment remains unvalidated until explicitly deployed and reviewed. An anonymous name is not network anonymity: nodes observe IP connections and public chains expose transactions.
 
 Encrypted packages remain encrypted end to end only while content keys remain private. Public titles, summaries, tags, archive sizes and publishing identity are visible. Recipients can redistribute keys or plaintext. Deletion only controls this operator's bytes and index; it cannot recall external copies or remove chain history.
 
@@ -35,14 +35,16 @@ Encrypted packages remain encrypted end to end only while content keys remain pr
 
 One process owns one SQLite database/data directory. Do not run concurrent replicas against the same volume. Use the HTTPS overlay or an equivalent trusted reverse proxy; publicURL comes from explicit configuration, not the Host header. The default Compose binding is loopback. The local chain overlay is developer-only with public deterministic keys and must never be Internet-exposed or receive real assets.
 
-The data volume includes the operator private signing key, database and objects. Back it up consistently and protect access. Upload expiry is not a promise of paid long-term retention; completed files remain subject to operator capacity and removal until retention markets are integrated.
+The data volume includes the operator private signing key, database and objects. Back it up consistently and protect access. Upload expiry is not a promise of paid long-term retention; completed files remain subject to operator capacity and removal unless an explicit funded retention agreement is in force; even then continued service requires independent monitoring and recovery.
 
-## Not yet implemented
+## Implemented V2 boundaries
 
-- Public-chain deployment, production wallet binding, automated onchain publication or earning in ATS.
-- Multi-operator discovery/federation, independently replayable chain indexes, automatic cross-node replication.
-- Cryptographic unique-replica/continuous-storage proof, objective fraud slashing, decentralized attestor selection.
-- Complete authorization review, audio quality adjudication, automated infringement determination, appeal court or production token economics.
-- Background/resumable client downloads (the node serves Range; ATS first client verifies a whole downloaded archive).
+Pinned federation and replica repair depend on trusted origin keys and bounded configured peers. No arbitrary publisher URL is fetched. Replica existence/HTTP retrieval does not establish unique hardware, independent ownership or continuous custody. Signed catalogues authenticate their issuing node; local rankings are not global consensus.
 
-These gaps are release gates in PLAN.md. A public source repository is not a public production service.
+The replaceable chain indexer validates a selected manifest/RPC chain ID and runtime code, tracks confirmed canonical blocks and rewinds reorged events. Offchain material must match the committed metadata hash. Observers must isolate evidence by canonical order/period to avoid reusing observations after reorganization. Pending or stale events cannot authorize payment.
+
+Committee reports, dispute resolution and prefunded reward roots retain disclosed administrator trust. Threshold processes running on one development host are not independent organizations. Withdrawal/reward liabilities and period budgets are bounded by deposited test tokens; this is not audited monetary security. No mainnet or publicly funded operation has been performed.
+
+The official Filecoin PDP adapter delegates established storage commitments to that network. Local adapter/mocked checks are not proof that a live Filecoin provider stored a specific archive. Live upload requires explicit funded execution and retention monitoring.
+
+Remaining external gates include independent security/economic review, real independent operators and funding, content/license adjudication and storefront policy review. Native device P2P, decentralized committee selection and unique physical-replica proofs are not implemented. The App uses configured federated HTTPS peers; that transport must not be advertised as native libp2p. Client archive downloads restart as whole verified transfers; node replica transfers persist ranges.
