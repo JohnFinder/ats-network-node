@@ -27,6 +27,9 @@ if (publicURL.username || publicURL.password || publicURL.search || publicURL.ha
   throw new Error('NODE_PUBLIC_URL must be an HTTPS origin (HTTP loopback is development only)');
 }
 const adminIDs = new Set((process.env.NODE_ADMIN_PUBLIC_KEYS ?? '').split(',').filter(Boolean));
+const ttsPublicURL = new URL(process.env.NODE_TTS_PUBLIC_URL ?? publicURL.origin);
+if (process.env.NODE_TTS_ENABLED === '1' && (ttsPublicURL.username || ttsPublicURL.password || ttsPublicURL.search || ttsPublicURL.hash || ttsPublicURL.pathname !== '/' ||
+    (ttsPublicURL.protocol !== 'https:' && !(ttsPublicURL.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(ttsPublicURL.hostname))))) throw new Error('NODE_TTS_PUBLIC_URL must be an HTTPS origin (HTTP loopback is development only)');
 const providerAddress = process.env.NODE_PROVIDER_ADDRESS ?? null;
 if (providerAddress && !/^0x[0-9a-fA-F]{40}$/.test(providerAddress)) throw new Error('Invalid NODE_PROVIDER_ADDRESS');
 const sha = value => createHash('sha256').update(value).digest('hex');
@@ -217,7 +220,8 @@ async function route(req, res) {
     const disk = await statfs(dataDir);
     return json(res, 200, {
     schemaVersion: 1, nodeVersion: '0.2.0', providerID, publicKey: providerPublicKey.toString('base64'), providerAddress, publicURL: publicURL.origin,
-    partSize, maximumFileBytes: maxFile, capabilities: ['resumable-upload', 'public-search', 'range-download', 'signed-evidence', 'signed-federation', 'public-replication', 'retention-leases'],
+    partSize, maximumFileBytes: maxFile, capabilities: ['resumable-upload', 'public-search', 'range-download', 'signed-evidence', 'signed-federation', 'public-replication', 'retention-leases', ...(process.env.NODE_TTS_ENABLED === '1' ? ['voxcpm2-speech'] : [])],
+    ...(process.env.NODE_TTS_ENABLED === '1' ? { tts: { model: 'openbmb/VoxCPM2', endpoint: `${ttsPublicURL.origin}/v1/audio/speech`, modelsEndpoint: `${ttsPublicURL.origin}/v1/models`, authentication: 'bearer-api-key', sampleRate: 48000, readiness: 'check-authenticated-models-endpoint' } } : {}),
     rewards: { mode: 'external-attested-escrow', automaticMinting: false }
     ,storage: { configuredQuotaBytes: totalQuota, availableDiskBytes: disk.bavail * disk.bsize }
     });

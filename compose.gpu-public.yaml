@@ -1,0 +1,11 @@
+# Apply after compose.public.yaml when publishing the GPU endpoint using TLS.
+services:
+  node:
+    environment:
+      NODE_TTS_PUBLIC_URL: https://${NODE_DOMAIN:?Set NODE_DOMAIN in .env}
+  proxy:
+    volumes:
+      - ./Caddyfile.gpu:/etc/caddy/Caddyfile:ro
+    depends_on:
+      tts:
+        condition: service_healthy

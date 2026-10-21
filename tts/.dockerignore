@@ -1,0 +1,6 @@
+secrets/
+artifacts/
+*.key
+*.pem
+*.wav
+node_modules/

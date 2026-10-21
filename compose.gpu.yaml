@@ -1,0 +1,95 @@
+# GPU operator overlay: adds authenticated VoxCPM2 by default. The base
+# compose.yaml remains available for operators providing storage without a GPU.
+services:
+  node:
+    environment:
+      NODE_TTS_ENABLED: "1"
+      NODE_TTS_PUBLIC_URL: ${TTS_PUBLIC_URL:-http://127.0.0.1:${TTS_PORT:-8791}}
+  tts:
+    build: ./tts
+    restart: unless-stopped
+    init: true
+    ports:
+      - "127.0.0.1:${TTS_PORT:-8791}:8791"
+    environment:
+      TTS_UPSTREAM: http://voxcpm2:8000
+      TTS_API_KEY_FILE: /run/secrets/tts_api_key
+      TTS_MAX_CONCURRENT: ${TTS_MAX_CONCURRENT:-8}
+      TTS_TIMEOUT_SECONDS: ${TTS_TIMEOUT_SECONDS:-180}
+    secrets:
+      - tts_api_key
+    group_add:
+      - "${TTS_SECRET_GID:-1000}"
+    networks: [default, tts-engine]
+    depends_on:
+      voxcpm2:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 1g
+    cpus: 2
+    pids_limit: 128
+    logging:
+      options: {max-size: "10m", max-file: "3"}
+  voxcpm2:
+    build:
+      context: ./tts
+      dockerfile: engine.Dockerfile
+    platform: linux/amd64
+    restart: unless-stopped
+    init: true
+    # No published engine ports. Only the authenticated gateway shares this network.
+    networks: [tts-engine]
+    command:
+      - openbmb/VoxCPM2
+      - --omni
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --served-model-name
+      - openbmb/VoxCPM2
+      - --revision
+      - 32279effe8c19989596f05d353d1447f51d9e915
+      - --deploy-config
+      - /etc/ats/voxcpm2.yaml
+      - --no-enable-log-requests
+    environment:
+      HF_HOME: /cache/huggingface
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      VLLM_NO_USAGE_STATS: "1"
+      VLLM_WORKER_MULTIPROC_METHOD: spawn
+      TORCHINDUCTOR_CACHE_DIR: /cache/torchinductor
+      TRITON_CACHE_DIR: /cache/triton
+    volumes:
+      - ./tts/voxcpm2.yaml:/etc/ats/voxcpm2.yaml:ro
+      - tts-model-cache:/cache
+    shm_size: 2gb
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    pids_limit: 1024
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: [CMD, python3, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15m
+      retries: 5
+    logging:
+      options: {max-size: "10m", max-file: "3"}
+secrets:
+  tts_api_key:
+    file: ./secrets/tts_api_key
+volumes:
+  tts-model-cache:
+networks:
+  tts-engine:

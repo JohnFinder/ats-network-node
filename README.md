@@ -16,6 +16,7 @@ Features implemented:
 - Ed25519/EVM double-proof binding, chain publication, immutable royalty splits and reorg-aware replaceable indexers.
 - Prepaid periodic storage accounting, committee observations, disputes/refunds, funded publisher tasks and bounded reward epochs.
 - Optional Filecoin Synapse adapter for an established PDP storage layer (live paid-network validation requires a funded deployment).
+- GPU operators provide an API-key authenticated VoxCPM2 speech endpoint using the pinned official vLLM-Omni serving engine, including reference-audio cloning; [Linux NVIDIA deployment](tts/README.zh-Hant.md).
 
 This node does **not** mint tokens. The contracts directory provides versioned identity, publication, storage, tasks and reward contracts. The services directory provides their operational indexer/observer/settlement integration. A signed node statement is not proof of independent replicas or a guarantee of future availability. A verifier must actually retrieve and hash the object before accepting a storage/service claim.
 
@@ -24,6 +25,8 @@ This node does **not** mint tokens. The contracts directory provides versioned i
 Read [the implementation/status plan](docs/PLAN.md), [multi-node validation](docs/MESH-VALIDATION.md), [chain/services](services/README.md), [contracts](contracts/README.md) and [operations](docs/OPERATIONS.md). Local reproducible validation is distinct from a funded public launch. Public deployment requires independent operators, a chain configuration, HTTPS domains and an external security review.
 
 ## Deploy locally
+
+For the complete **NVIDIA GPU operator** deployment, use `sh scripts/start-gpu-node.sh` on Linux. It generates the private API key and starts storage, the authenticated speech gateway and the internal VoxCPM2 engine together. The following base deployment is for storage operators without a GPU.
 
 Install Docker with Compose support, then:
 
