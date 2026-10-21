@@ -5,12 +5,16 @@ The storage node has no required ATS-owned backend. Operators supply disk/networ
 ## Deployment choices
 
 - `compose.yaml`: one persistent storage node on host loopback.
+- `compose.gpu.yaml`: authenticated speech gateway plus a private NVIDIA VoxCPM2 engine, with configurable 1–128 deployment concurrency (default 8). Read `tts/README.zh-Hant.md` for hardware and memory requirements.
 - `compose.full.yaml`: isolated three-node mesh demonstration. Read its comments: development HTTP and generated pins are unsuitable as a public deployment unchanged.
 - `compose.services.yaml`: independently persisted EVM indexer/observer/coordinator services; read `services/README.md` for required manifest, pinned origins and Docker secrets.
 - `compose.public.yaml`: HTTPS/Caddy example; configure DNS and an actual domain. Enable the services overlay before proxying `/v2` and `/wallet` to it.
+- `compose.gpu-public.yaml`: speech routes for the public GPU deployment; use together with the base, GPU and public overlays.
 - `storage/`: optional mature Filecoin PDP adapter. It is not a free storage account and never invents funding or storage proofs.
 
 Use one process per writable volume. Keep storage, indexer, observer and coordinator identities separate. Operators in different failure domains are an operational requirement: three containers on one laptop demonstrate software behavior, not three independent operators.
+
+See [deployment, upgrades and rollback](DEPLOYMENT.md) before replacing a running installation. Preserve the Compose project name, credentials, YAML resource tuning and existing volumes. Publishing or pulling source does not deploy containers or run acceptance workloads; GitHub acceptance requires manual dispatch.
 
 ## Joining a mesh
 

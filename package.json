@@ -1,9 +1,9 @@
 {
   "name": "ats-network-node",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
-  "description": "Resumable ATS audiobook storage and public discovery node",
+  "description": "Independent ATS audiobook storage, signed discovery, and optional NVIDIA VoxCPM2 speech node",
   "engines": {
     "node": ">=24.0.0"
   },
@@ -14,5 +14,13 @@
     "verify:prepare": "node scripts/verify-node.mjs prepare",
     "verify:resume": "node scripts/verify-node.mjs resume"
   },
-  "license": "MIT"
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JohnFinder/ats-network-node.git"
+  },
+  "bugs": {
+    "url": "https://github.com/JohnFinder/ats-network-node/issues"
+  },
+  "homepage": "https://github.com/JohnFinder/ats-network-node#readme"
 }

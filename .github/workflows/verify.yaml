@@ -1,7 +1,7 @@
-name: Verify decentralized node and funded test-token services
+name: Manual node acceptance
+# Builds and acceptance run only after an operator explicitly dispatches this workflow.
 on:
-  push:
-  pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:

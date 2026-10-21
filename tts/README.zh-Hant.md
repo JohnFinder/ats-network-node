@@ -27,11 +27,47 @@ API key 更換：先停止 `tts` gateway，把舊 key 移到安全備份位置�
 
 ## 固定推理環境與速度
 
-採用官方 **vLLM-Omni v0.30.0**，與 vLLM 0.30.0 配套，官方映像以 SHA256 digest 固定；VoxCPM 依賴固定為 2.0.3，模型權重固定為 `32279effe8c19989596f05d353d1447f51d9e915`。`voxcpm2.yaml` 取自該 release 的設定，只有 `trust_remote_code` 關閉，避免下載執行模型倉庫程式。
+採用官方 **vLLM-Omni v0.30.0**，與 vLLM 0.30.0 配套，官方映像以 SHA256 digest 固定；VoxCPM 依賴固定為 2.0.3，模型權重固定為 `32279effe8c19989596f05d353d1447f51d9e915`。`voxcpm2.yaml` 以上游 release 為基礎，固定 KV cache 預算並提供可調整的並發容量；`trust_remote_code` 關閉，避免下載執行模型倉庫程式。
 
-該設定使用長駐引擎、連續批次、批次 CFM 與 AudioVAE、融合 QKV／MLP、零時間步快取及模型內部 unified decode CUDA graph。KV cache 固定 6 GiB，最多八個序列，保留 CFM/VAE 額外顯存。保留 `enforce_eager: true` 是上游的模型相容性要求；模型內部 CUDA graph 仍會工作。不要為了「開啟 CUDA graph」直接反轉此選項。
+該設定使用長駐引擎、連續批次、批次 CFM 與 AudioVAE、融合 QKV／MLP、零時間步快取及模型內部 unified decode CUDA graph。預設 KV cache 固定 6 GiB、最多八個序列，保留 CFM/VAE 額外顯存。保留 `enforce_eager: true` 是上游的模型相容性要求；模型內部 CUDA graph 仍會工作。不要為了「開啟 CUDA graph」直接反轉此選項。
 
-這是官方支援且具批次最佳化的 NVIDIA 服務方案。沒有跨所有 GPU、句長、語言和併發量都最快的固定組態；初版沿用上游品質設定，沒有藉減少擴散步數或降低取樣率換取速度。請在目標 GPU 預熱後測量 1、4、8 併發，再決定接納數。`TTS_MAX_CONCURRENT` 預設 8，超出時立即回傳 `429`／`Retry-After: 2`，不建立無限等待佇列；設定值不可高於 `voxcpm2.yaml` 的 `max_num_seqs`。顯存較緊時，先降低同時接納數與引擎序列數，再調整 GPU 使用率／KV cache，不能保證較小 GPU 可用。
+這是官方支援且具批次最佳化的 NVIDIA 服務方案。沒有跨所有 GPU、句長、語言和併發量都最快的固定組態；初版沿用上游品質設定，沒有藉減少擴散步數或降低取樣率換取速度。部署容量範圍為 **1–128**，預設仍為 8；超出 Gateway 接納數時立即回傳 `429`／`Retry-After: 2`，不建立無限等待佇列。請在目標 GPU 預熱後從 1、4、8 逐步提高並發數，以吞吐量、p95 延遲及峰值顯存決定實際配置。
+
+## 部署並發參數
+
+建議在 倉庫根目錄的 `.env` 設定共用值，例如以下配置會讓 Gateway 最多接納 128 個未完成的合成請求，並將引擎序列上限及 unified decode graph 批次上限都設為 128：
+
+```dotenv
+TTS_MAX_CONCURRENT=128
+```
+
+| 參數 | 預設／範圍 | 作用 |
+| --- | --- | --- |
+| `TTS_MAX_CONCURRENT` | 8／1–128 | Compose 同時傳入 Gateway 與引擎；引擎啟動時覆蓋 YAML 的 `max_num_seqs` 和 `unified_decode_graph_max_batch_size` |
+| `TTS_CUDA_GRAPH_MAX_BATCH_SIZE` | 空／1–引擎序列上限 | 可單獨降低 graph 批次容量；有共用並發值時，空值跟隨該值，否則保留 YAML graph 設定 |
+| `TTS_GATEWAY_MEMORY_LIMIT` | `1g` | Gateway 容器系統記憶體上限；大量同時上傳參考 WAV 時需按實際用量提高 |
+| `TTS_GATEWAY_CPUS` | `2` | Gateway 容器 CPU 額度，可按 JSON／WAV 處理需求調整 |
+
+引擎啟動工具會先檢查整數範圍和 graph 批次容量不得大於序列上限，再將有效設定寫入容器內私有臨時 YAML，最後啟動 `vllm serve`。掛載的原始 YAML 不會被改寫；啟動日誌會顯示有效的兩個批次上限。`0`、超過 `128`、小數或格式錯誤會拒絕啟動。
+
+也可以直接透過 YAML 配置：Gateway 在 Compose 的 `tts.environment.TTS_MAX_CONCURRENT` 設定接納數；引擎的 `voxcpm2.environment.TTS_MAX_CONCURRENT` 設為空字串，便會使用掛載的 `tts/voxcpm2.yaml`。例如在最後套用的 Compose override 中寫入：
+
+```yaml
+services:
+  tts:
+    environment:
+      TTS_MAX_CONCURRENT: "128"
+  voxcpm2:
+    environment:
+      TTS_MAX_CONCURRENT: ""
+      TTS_CUDA_GRAPH_MAX_BATCH_SIZE: ""
+```
+
+此時將 `tts/voxcpm2.yaml` 的 `stages[0].max_num_seqs` 及 `stages[0].engine_extras.hf_overrides.voxcpm2_runtime_config.unified_decode_graph_max_batch_size` 設為所需值（1–128）。Gateway 接納數應小於或等於引擎序列上限。若直接啟動引擎容器，未提供或留空的環境變量亦使用 YAML；非空的環境變量優先。獨立 Gateway 未提供環境變量時仍預設 8。
+
+修改後需重新建立 Gateway 和引擎容器。使用上述 `.env` 方式的節點，重新執行原本的 `scripts/start-gpu-node.sh`（公開節點保留 `--public`）；首次套用本次程式更新需要重建映像。自行使用 Compose override 時，重新部署時需保留同一組 override 檔案。
+
+**128 是可配置的接納／排程上限，尚未在目標 GPU 驗證 128 路效能。** `kv_cache_memory_bytes` 仍明確固定為 6 GiB，增加序列數不會自動擴大 KV cache，也不代表每個請求都同時佔用完整 `max_model_len`。如需調整容量，請另外修改 YAML 的 KV 預算、`max_model_len` 和 `max_num_batched_tokens`，並為 CFM、AudioVAE、CUDA graph 批次池及其他 GPU 服務預留顯存。graph 批次上限可較小，但不會限制其他模型支路的批次分配；它不是總顯存上限。長句及大量參考音訊也可能需要提高 Gateway 記憶體與 `TTS_TIMEOUT_SECONDS`（5–600 秒）；公開節點若提高逾時，亦需調整 `Caddyfile.gpu` 的 `response_header_timeout`，其預設為 190 秒。
 
 ## App 介面契約
 
@@ -62,13 +98,15 @@ Authorization: Bearer <API key>
 
 ## 目標 NVIDIA 主機效能驗證
 
-以下工具是營運者明確執行的效能實驗，沒有加入自動回歸測試或啟動時額外消耗 GPU。需要 Node.js 24，也可在支援 host networking 的 Linux Docker 容器內執行。它不輸出輸入內容、聲音或 key，最多 60 個正式請求加兩次預熱，每次最長 180 秒。
+以下工具是營運者明確執行的效能實驗，沒有加入自動回歸測試或啟動時額外消耗 GPU。需要 Node.js 24，也可在支援 host networking 的 Linux Docker 容器內執行。它不輸出輸入內容、聲音或 key，支援 1–128 併發、最多 1024 個正式請求加兩次預熱，每次最長 180 秒。正式請求數不得小於並發數；測量客戶端也需有足夠記憶體同時接收 WAV。
 
 ```sh
 node tts/scripts/benchmark.mjs --concurrency 1 --requests 8 --output artifacts/tts-c1.json
 node tts/scripts/benchmark.mjs --concurrency 4 --requests 16 --output artifacts/tts-c4.json
 node tts/scripts/benchmark.mjs --concurrency 8 --requests 24 --output artifacts/tts-c8.json
 ```
+
+確認較低檔位的延遲及顯存符合需求後，再按 16、32、64、128 提高部署容量及實驗並發數。例如已部署為 128 時，可明確執行 `node tts/scripts/benchmark.mjs --concurrency 128 --requests 256 --output artifacts/tts-c128.json`。不要把這段操作說明當作已完成的 128 路實測結果。
 
 請先建立 `artifacts` 目錄。遠端測量使用 `--url https://你的網域 --key-file 私密key檔案`；音色複製增加 `--ref-wav 參考.wav`，可選 `--ref-text-file 逐字稿.txt`。結果分開記錄預熱、p50/p95 延遲與 RTF、每秒產生的音訊秒數。此介面為完整 WAV 回應，first response byte 包含合成／緩衝等待，不能冒充串流的第一音訊延遲。`clientHardware` 只描述執行工具的主機，遠端測量還需另記服務器 GPU 和驅動。
 

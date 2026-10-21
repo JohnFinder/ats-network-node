@@ -1,9 +1,23 @@
 {
   "name": "ats-voxcpm2-gateway",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=24.0.0" },
-  "scripts": { "start": "node src/server.mjs", "check": "node --check src/server.mjs && node --check scripts/create-key.mjs && node --check scripts/benchmark.mjs" },
-  "license": "MIT"
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "check": "node --check src/server.mjs && node --check scripts/create-key.mjs && node --check scripts/benchmark.mjs"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JohnFinder/ats-network-node.git",
+    "directory": "tts"
+  },
+  "bugs": {
+    "url": "https://github.com/JohnFinder/ats-network-node/issues"
+  },
+  "homepage": "https://github.com/JohnFinder/ats-network-node#readme"
 }

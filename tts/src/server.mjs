@@ -12,7 +12,7 @@ const bounded = (name, fallback, minimum, maximum) => {
   return value;
 };
 const port = bounded('TTS_PORT', 8791, 1, 65535);
-const maxConcurrent = bounded('TTS_MAX_CONCURRENT', 8, 1, 16);
+const maxConcurrent = bounded('TTS_MAX_CONCURRENT', 8, 1, 128);
 const maxBody = bounded('TTS_MAX_BODY_BYTES', 12 * 1024 * 1024, 1024, 16 * 1024 * 1024);
 const maxResponse = bounded('TTS_MAX_RESPONSE_BYTES', 64 * 1024 * 1024, 1024, 128 * 1024 * 1024);
 const timeout = bounded('TTS_TIMEOUT_SECONDS', 180, 5, 600) * 1000;
@@ -178,8 +178,10 @@ const server = http.createServer({ maxHeaderSize: 8192 }, (req, res) => {
 server.requestTimeout = Math.min(timeout, 30000);
 server.headersTimeout = 10000;
 server.keepAliveTimeout = 5000;
-server.maxConnections = 128;
-server.listen(port, '0.0.0.0', () => console.log(`ATS VoxCPM2 gateway listening on ${port}`));
+// Leave room for idle keep-alive sockets, probes, and busy responses even when
+// every synthesis slot is occupied. Socket count is not the admission limit.
+server.maxConnections = Math.max(128, maxConcurrent * 2 + 32);
+server.listen(port, '0.0.0.0', () => console.log(`ATS VoxCPM2 gateway listening on ${port}; max_concurrent=${maxConcurrent}`));
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => {
   server.close(); server.closeIdleConnections();
   setTimeout(() => process.exit(0), 5000).unref();

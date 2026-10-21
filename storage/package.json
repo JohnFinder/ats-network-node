@@ -15,5 +15,15 @@
     "@filoz/synapse-core": "0.10.1",
     "@filoz/synapse-sdk": "2.0.2",
     "viem": "2.57.7"
-  }
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JohnFinder/ats-network-node.git",
+    "directory": "storage"
+  },
+  "bugs": {
+    "url": "https://github.com/JohnFinder/ats-network-node/issues"
+  },
+  "homepage": "https://github.com/JohnFinder/ats-network-node#readme"
 }

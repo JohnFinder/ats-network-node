@@ -1,0 +1,8 @@
+ATS Network Node
+Copyright 2026 ATS Network contributors
+
+Project-owned code and documentation are licensed under the Apache License,
+Version 2.0. See LICENSE for the full terms.
+
+Third-party dependencies, container images and model weights retain their
+upstream copyrights, licenses and notices. See THIRD_PARTY_NOTICES.md.

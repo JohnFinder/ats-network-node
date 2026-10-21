@@ -1,5 +1,7 @@
 # Verification record — 2026-10-16
 
+This is a historical execution record. The 2026-10-22 standalone publication has static source, metadata and documentation checks only; builds, acceptance tests, GPU benchmarks and deployment were not executed for that publication. The latest speech configuration scope is recorded separately in [tts/VALIDATION.md](../tts/VALIDATION.md).
+
 ## Executed locally
 
 Docker Desktop/Engine29.8.2; Node24 host tooling; storage image `node:24-alpine`; contract tooling image `node:24-bookworm-slim`; Solidity0.8.30, OpenZeppelin5.4.0, ethers6.15.0 and Ganache7.9.2 pinned in the contract package lock.
@@ -33,4 +35,4 @@ No upload/download minted tokens. No mainnet or public-testnet deployment, monet
 
 Public HTTPS certificate issuance/DNS, Internet deployment, physical mobile devices, production backups/disaster recovery, independent storage replicas, Sybil-resistant humans, real-world network partitions, sustained adversarial load, public-chain RPC/finality, production economics, third-party audit and Apple review. The HTTPS overlay is provided as deployment configuration, not an assertion that a public service is live. Bootstrap attestors and administrator remain trusted roles.
 
-GitHub CI runs the same isolated Docker acceptance script when enabled by repository policy. Remote CI status must be checked separately; local success alone does not imply a remote pass.
+GitHub acceptance is available through an explicit manual workflow dispatch. A push or pull request does not start builds or tests. Historical local results do not establish the status of a later source revision; check the relevant run and commit separately.

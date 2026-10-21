@@ -1,6 +1,6 @@
 # 節點部署與驗證
 
-本倉庫是 ATS 共享網路的可執行原型。檔案由節點營運者保存，App 營運者無須集中保存文檔；實際硬碟、頻寬與保存費用仍由節點或贊助者承擔。
+本倉庫提供 ATS 共享網路節點及可選 NVIDIA VoxCPM2 語音服務，不包含 Apple App。檔案由節點營運者保存，實際硬碟、頻寬、GPU 與保存費用由節點或贊助者承擔。專案自有代碼採用 [Apache-2.0](../LICENSE)。
 
 ## 本機啟動
 
@@ -17,6 +17,14 @@ docker compose up -d --build
 
 節點資料保存在 Docker volume，重建容器不會清除。請勿使用 `docker compose down -v` 刪除正式節點資料。
 
+## NVIDIA 語音節點
+
+Linux x86_64 NVIDIA 主機完成驅動與 Container Toolkit 設定後，在倉庫根目錄執行 `sh scripts/start-gpu-node.sh`。此工具啟動儲存、帶 API key 的語音 Gateway 及私有 VoxCPM2 引擎。完整硬體需求、固定版本與 API 見 [GPU 指南](../tts/README.zh-Hant.md)。
+
+`.env` 的 `TTS_MAX_CONCURRENT` 控制部署接納數與引擎序列／decode graph 容量，接受 **1–128**，預設 **8**。設定 `128` 不會自動擴大 KV cache，亦不是目標 GPU 的效能保證。YAML 與環境變量的優先順序見[並發參數](../tts/README.zh-Hant.md#部署並發參數)。
+
+既有節點按[升級與回退手冊](DEPLOYMENT.md)更新，保留 `.env`、API key、Compose project 名稱、資料與模型快取 volume，以及原本的 YAML 顯存調校值。
+
 ## 公開 HTTPS 節點
 
 準備指向主機的網域與可連入的 80/443 埠，在 `.env` 加入 `NODE_DOMAIN=你的網域`，設定適合主機容量的配額，再執行：
@@ -27,6 +35,8 @@ docker compose -f compose.yaml -f compose.public.yaml up -d --build
 
 Caddy 會嘗試簽發 TLS 憑證。這需要真實 DNS、網路與憑證機構可達；本機驗證不代表公共 HTTPS 已驗證。公開服務啟動前應先決定接收政策、容量預算、管理員、備份與濫用處理方式。
 
+公開 GPU 節點使用 `sh scripts/start-gpu-node.sh --public`，同時套用 GPU 與 HTTPS 路由；不要只套用純儲存節點的公開配置。
+
 將實際 `https://你的網域` 配置為 ATS 的 `ATSCommunityNodeURL` 後，該版本的一般使用者不用自行填節點地址。未配置部署網址的版本會如實顯示設定入口。
 
 ## 上載、搜尋與私人檔案
@@ -36,6 +46,8 @@ ATS 匯出完成後選「上載到節點」，可選公開共享、僅連結或�
 上載任務使用固定快照與 8 MiB 分段，可暫停及重新開啟 App 後恢復。公開檔案完成大小、雜湊及容器標記校驗後自動進入該節點列表。下載次數與熱度是此節點觀測值，不代表全網統計，不會自動發幣。
 
 ## Docker 驗證
+
+以下指令只在營運者明確要求驗證時執行，日常更新及 GitHub 推送不會自動執行。GitHub Actions 也只接受手動觸發。
 
 需要主機 Node.js24以上，以產生無個人資料的測試檔：
 

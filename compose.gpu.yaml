@@ -28,9 +28,9 @@ services:
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=32m
     cap_drop: [ALL]
-    security_opt: [no-new-privileges:true]
-    mem_limit: 1g
-    cpus: 2
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: ${TTS_GATEWAY_MEMORY_LIMIT:-1g}
+    cpus: ${TTS_GATEWAY_CPUS:-2}
     pids_limit: 128
     logging:
       options: {max-size: "10m", max-file: "3"}
@@ -58,6 +58,10 @@ services:
       - /etc/ats/voxcpm2.yaml
       - --no-enable-log-requests
     environment:
+      # Empty preserves YAML values. When set, match gateway admission,
+      # engine sequence capacity, and the model's decode graph batch capacity.
+      TTS_MAX_CONCURRENT: ${TTS_MAX_CONCURRENT:-}
+      TTS_CUDA_GRAPH_MAX_BATCH_SIZE: ${TTS_CUDA_GRAPH_MAX_BATCH_SIZE:-}
       HF_HOME: /cache/huggingface
       HF_HUB_DISABLE_TELEMETRY: "1"
       VLLM_NO_USAGE_STATS: "1"
@@ -68,7 +72,7 @@ services:
       - ./tts/voxcpm2.yaml:/etc/ats/voxcpm2.yaml:ro
       - tts-model-cache:/cache
     shm_size: 2gb
-    security_opt: [no-new-privileges:true]
+    security_opt: ["no-new-privileges:true"]
     cap_drop: [ALL]
     pids_limit: 1024
     deploy:

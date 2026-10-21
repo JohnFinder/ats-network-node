@@ -1,7 +1,8 @@
 # Pinned upstream v0.30.0 / a8576ccb725c4e21cd13c3eb5f9a546b21149d2b.
 # VoxCPM2 deploy: single-stage AR pipeline with per-request state batching.
-# Runs on large (H20 141GB) and small (24GB L4) cards alike: the KV cache is
-# pinned to a right-sized budget instead of ballooning to fill the card.
+# Concurrency defaults to 8; deployment values support 1...128. The engine
+# entrypoint applies TTS_MAX_CONCURRENT to both sequence and graph capacities
+# when set; otherwise this YAML controls them independently of the gateway.
 #
 # VoxCPM2-local runtime knobs are passed through hf_overrides.
 async_chunk: false
@@ -11,16 +12,10 @@ stages:
   - stage_id: 0
     max_num_seqs: 8
     gpu_memory_utilization: 0.9
-    # Right-size the KV cache instead of letting it fill gpu_memory_utilization.
-    # max_num_seqs(8) * max_model_len(4096) ~= 32k tokens; 6 GiB leaves headroom
-    # for longer live requests while keeping VoxCPM2 TTS decode batches small
-    # enough to avoid the high ITL observed with large admission caps.
-    # The remaining VRAM stays free for the VoxCPM2 diffusion side-path
-    # (LocDiT / AudioVAE / code2wav + batch CUDA-graph pools), which allocates
-    # outside vLLM's KV accounting during inference. Keeps peak ~13 GiB on any
-    # card and avoids per-rebase OOM tuning on small CI GPUs.
-    # Assumes prefix caching off and typical live decode concurrency <= ~8;
-    # raise this cap if either grows or enable_prefix_caching is turned on.
+    # Explicit KV budget: increasing max_num_seqs does not resize this cache.
+    # Tune against live token usage and GPU capacity. CFM/AudioVAE and graph
+    # pools allocate outside vLLM's KV accounting, so this is not total VRAM.
+    # A 128-sequence cap alone does not guarantee 128 resident long requests.
     kv_cache_memory_bytes: 6442450944  # 6 GiB
     enforce_eager: true
     trust_remote_code: false
@@ -43,7 +38,7 @@ stages:
           enable_loc_dit_skip_qkv_contig: true
           enable_loc_dit_reduce_overhead_no_cg: true
           enable_unified_decode_graph: true
-          unified_decode_graph_max_batch_size: 8
+          unified_decode_graph_max_batch_size: 8  # 1...max_num_seqs (maximum 128)
     default_sampling_params:
       temperature: 0.0
       top_p: 1.0

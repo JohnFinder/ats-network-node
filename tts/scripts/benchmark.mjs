@@ -17,7 +17,8 @@ if (origin.username || origin.password || origin.search || origin.hash || origin
 const key = (await readFile(option('--key-file', 'secrets/tts_api_key'), 'utf8')).trim();
 const count = Number(option('--requests', '8'));
 const concurrency = Number(option('--concurrency', '1'));
-if (!Number.isInteger(count) || count < 1 || count > 60 || !Number.isInteger(concurrency) || concurrency < 1 || concurrency > 8) throw new Error('Use requests 1...60 and concurrency 1...8');
+if (!Number.isInteger(count) || count < 1 || count > 1024 || !Number.isInteger(concurrency) || concurrency < 1 || concurrency > 128) throw new Error('Use requests 1...1024 and concurrency 1...128');
+if (count < concurrency) throw new Error('Requests must be at least concurrency');
 const texts = [
   '这是用于测量有声书合成速度的固定短文。预热与正式测量分开进行，并分别记录音频时长和请求耗时。',
   'This fixed paragraph measures audiobook synthesis. Warmup is recorded separately from steady state, and audio duration is measured from the returned waveform.',

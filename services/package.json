@@ -14,5 +14,14 @@
   "dependencies": {
     "ethers": "6.15.0"
   },
-  "license": "MIT"
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JohnFinder/ats-network-node.git",
+    "directory": "services"
+  },
+  "bugs": {
+    "url": "https://github.com/JohnFinder/ats-network-node/issues"
+  },
+  "homepage": "https://github.com/JohnFinder/ats-network-node#readme"
 }
