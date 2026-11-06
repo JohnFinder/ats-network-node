@@ -1,38 +1,36 @@
-# Verification record — 2026-10-16
+# Verification record for 2026-10-16
 
-This is a historical execution record. The 2026-10-22 standalone publication has static source, metadata and documentation checks only; builds, acceptance tests, GPU benchmarks and deployment were not executed for that publication. The latest speech configuration scope is recorded separately in [tts/VALIDATION.md](../tts/VALIDATION.md).
+This record covers the local storage and chain acceptance run described below. The standalone publication of 2026-10-22 underwent static source, metadata and documentation checks. See the [GPU validation record](../tts/VALIDATION.md) for the separate speech configuration scope.
 
-## Executed locally
+## Environment and procedure
 
-Docker Desktop/Engine29.8.2; Node24 host tooling; storage image `node:24-alpine`; contract tooling image `node:24-bookworm-slim`; Solidity0.8.30, OpenZeppelin5.4.0, ethers6.15.0 and Ganache7.9.2 pinned in the contract package lock.
+The run used Docker Desktop with Engine 29.8.2 and Node.js 24 host tools. Storage used `node:24-alpine` and contract tools used `node:24-bookworm-slim`. The contract lockfile pinned Solidity 0.8.30, OpenZeppelin 5.4.0, ethers 6.15.0 and Ganache 7.9.2.
 
-`./scripts/verify-docker.sh` passed from a new isolated Compose project and fresh volumes. It built both images, uploaded the first8MiB of a synthetic fixture, explicitly restarted storage, recovered the same provider identity and upload parts, completed the upload and then connected actual node evidence to a local EVM1337 deployment. The script removed only its own containers and volumes after success. The final run included target-origin audience signatures and rejection of a valid signature addressed to a different node.
+`./scripts/verify-docker.sh` passed in an isolated Compose project with fresh volumes. The runner built both images, uploaded the first 8 MiB of a synthetic archive, restarted storage and checked the original provider identity and uploaded part before resuming. It completed the archive and sent evidence from that node to a local EVM deployment with chain ID 1337. It removed its own containers and volumes after success.
 
-Storage prepare:2 checks. Resume/access/download phase:20 checks. Integrated local-chain phase:26 checks. These are script-level functional acceptance checks, not a security audit or comprehensive formal verification.
+The storage preparation phase passed 2 checks. Resume, access and download passed 20 checks. The integrated local chain passed 26 checks.
 
-## Storage behaviors covered
+## Storage coverage
 
-- Persistent identity and upload parts across container restart; exact remote part hashes.
-- Owner isolation; signed-body mutation and request replay rejection; cross-node audience rejection.
-- Incomplete and incorrect-hash publication rejection; idempotent completion; unfinished upload cancellation.
-- Public records automatically searchable, pagination input validation, private and unlisted records excluded.
-- Full exact-byte/SHA256 retrieval and HTTP range retrieval.
-- Incomplete downloads cannot increment counters; completion cannot count twice; local downloads/trending ordering.
-- Private owner tickets, unauthorized metadata access and unauthorized deletion.
-- Node evidence signature and pinned identity verification.
+- Provider identity and exact uploaded part hashes persisted across the restart.
+- Owner isolation held, and the node rejected mutated signed bodies, replayed requests and otherwise valid signatures addressed to a different node.
+- The node rejected incomplete or incorrect-hash publications and supported idempotent completion and cancellation of unfinished uploads.
+- The catalog handled public search and pagination while excluding private and unlisted records. At the tested revision, successful public uploads became searchable immediately.
+- Full and ranged retrieval returned exact bytes. The full archive matched its SHA-256.
+- Incomplete transfers did not increment observed downloads. Repeated completion did not count twice. The run checked downloads and Trending ordering.
+- Private owner tickets worked, and unauthorized metadata requests and deletions failed.
+- Evidence signatures matched the pinned node identity.
 
-Synthetic fixtures have an ATSBOOK1 prefix but are not valid signed audiobook archives. This deliberately exercises storage as an opaque bounded byte service. It does not establish full archive signature acceptance, playable audio, app UI correctness or device playback.
+Fixtures used the `ATSBOOK1` prefix and synthetic bytes. Full archive signature acceptance, playable audio, app UI and device playback require separate checks.
 
-## Local-chain behaviors covered
+## Local chain coverage
 
-Actual signed node evidence was fetched, verified against an expected node identity, and its object independently downloaded and hashed before the evidence digest entered settlement. Provider wallet binding was explicitly not inferred.
+Before submitting the evidence digest for settlement, the verifier fetched signed evidence, checked the expected node identity, independently retrieved the object and checked its hash. Wallet binding was outside that inference.
 
-Checks cover publisher-scoped immutable registration, capped preminted test supply, deposited stake accounting, active-service unbond protection, unauthorized/duplicate/insufficient attestation rejection, committee-generation isolation, prepaid service settlement, expired-service refund, publisher bounty delay and payout, epoch delay/proof/recipient/replay checks, budget accounting, preactivation epoch cancellation and delayed bond withdrawal. Final token balance equals tracked liabilities.
+The run covered publisher-scoped immutable registration, capped preminted test supply, stake accounting, unbond protection during active service, attestation authorization, duplicate and threshold checks, committee generation isolation, prepaid settlement, expired-service refunds, bounty delay and payout, epoch delay, proof, recipient and replay checks, budget accounting, cancellation before epoch activation, and delayed bond withdrawal. Final token balances matched recorded liabilities. The run used a local test currency with no monetary value. Upload and download activity did not mint tokens.
 
-No upload/download minted tokens. No mainnet or public-testnet deployment, monetary-value token, actual payment or wallet balance was used.
+## Limits and reruns
 
-## Not exercised / not claimed
+Public DNS and TLS issuance, physical devices, production disaster recovery, independent replicas, human uniqueness, adverse network conditions, sustained abuse load, public-chain finality, production economics, external audits and Apple review require separate validation. The bootstrap design continues to trust the administrator and configured attestors.
 
-Public HTTPS certificate issuance/DNS, Internet deployment, physical mobile devices, production backups/disaster recovery, independent storage replicas, Sybil-resistant humans, real-world network partitions, sustained adversarial load, public-chain RPC/finality, production economics, third-party audit and Apple review. The HTTPS overlay is provided as deployment configuration, not an assertion that a public service is live. Bootstrap attestors and administrator remain trusted roles.
-
-GitHub acceptance is available through an explicit manual workflow dispatch. A push or pull request does not start builds or tests. Historical local results do not establish the status of a later source revision; check the relevant run and commit separately.
+GitHub acceptance requires a manual dispatch. When evaluating a later revision, check the exact source revision, environment and results of its own run.

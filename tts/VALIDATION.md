@@ -1,16 +1,17 @@
-# GPU gateway 交付驗證（2026-10-21）
+# GPU deployment validation record
 
-- Node.js 24 gateway Docker 映像建立成功。
-- GPU 與公開 HTTPS Compose 合併配置驗證通過；配置檢查使用範例網域，未啟動公開服務。
-- 使用獨立 Docker 網路和模擬引擎，18 項檢查通過：API key、模型就緒狀態、WAV 轉送、語言欄位、拒絕 URL／檔案參考、模型限制、大小限制、併發限制、取消與逾時釋放。
-- 驗證不使用真實文件、聲音或營運金鑰；容器及臨時網路已清除。
-- 執行主機為 Mac，沒有 NVIDIA GPU。未驗證 Linux GPU 映像啟動、真實語音品質、顯存、RTF 或最佳吞吐量。不能將模擬結果當作 NVIDIA 效能證據。
+## October 21, 2026 — Gateway delivery
 
-營運者在目標 Linux NVIDIA 主機執行 [部署與效能驗證步驟](README.zh-Hant.md)，並保留 GPU／驅動版本及 1、4、8 併發結果。正式對外提供服務前仍需完成此項驗收。
+The Node.js 24 gateway image built successfully. The combined GPU and public HTTPS Compose configuration validated with an example domain. This check covered configuration parsing. Live DNS, TLS issuance and public routing still needed verification.
 
-## 128 路可配置容量更新（2026-10-22）
+The gateway passed 18 checks in an isolated Docker network with a simulated engine. The checks covered API keys, model readiness, WAV forwarding, the language field, URL and file reference rejection, model and request size limits, admission limits, and slot release after cancellation or timeout.
 
-- Gateway、引擎序列容量及 decode graph 批次容量可透過環境變量設定為 1–128；引擎亦保留 YAML 設定方式。預設維持 8。
-- 本次依使用者要求不執行建置、功能測試或效能實驗。前述 2026-10-21 結果只適用於當時版本，不能當作本次變更的執行證據。
-- 僅做靜態檢查：Gateway／效能工具 JavaScript 語法、引擎啟動工具 Python 語法、Compose／引擎 YAML 語法、Git diff 格式及既有在地化目錄驗證均通過；沒有新增或修改 App 介面文字。
-- 128 路 GPU 推理、峰值顯存、吞吐量與延遲仍待營運者在目標硬體驗證；固定 6 GiB KV 預算不會隨並發值自動增加。
+The run used synthetic data and temporary credentials. The containers and isolated network were removed afterward. The Mac used for these checks had no NVIDIA GPU. Linux engine startup, audio quality, VRAM use, real-time factor and throughput require measurement on the target NVIDIA host.
+
+## October 22, 2026 — Configurable concurrency
+
+The update made gateway admission, engine sequence capacity and decode graph batch capacity configurable from 1 to 128. The default remained 8. The engine also continued to accept YAML configuration.
+
+Static checks covered JavaScript syntax for the gateway and benchmark, Python syntax for the engine launcher, Compose and engine YAML, the Git diff and the existing localization catalogs. The update involved static checks only. The October 21 runtime checks apply to the earlier gateway revision.
+
+The fixed 6 GiB KV cache does not grow with the sequence limit. Before public operation, validate engine startup and audio quality and record the GPU and driver versions. Measure concurrency at 1, 4 and 8, then increase the load while checking peak VRAM, throughput and p95 latency. The record has no 128-request hardware measurements. [Benchmark procedure](README.md#benchmark-the-target-gpu)

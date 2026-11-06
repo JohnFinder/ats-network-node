@@ -1,15 +1,13 @@
 # Security reporting
 
-Report vulnerabilities through this repository's **Security → Report a vulnerability** entry when private reporting is available. If unavailable, open an issue requesting a private channel without including exploit details, credentials or affected user content. Do not post signing keys, API keys, private download tickets, wallet seeds, real documents or voice recordings publicly.
+Use **Security → Report a vulnerability** on GitHub if private vulnerability reporting is available. Otherwise, open an issue asking for a private contact channel. Keep exploit details, signing keys, API keys, download tickets, wallet seeds, documents and voice recordings out of public issues.
 
-Include the affected commit, component, expected trust boundary and a minimal synthetic reproduction. Distinguish local development from public deployment configurations. No response-time or hosted support guarantee is implied.
+Identify the affected component and exact revision. Include a minimal synthetic reproduction, the expected trust boundary and whether the failure occurred in a local or public deployment. If possible, check whether the issue affects the latest published source. This repository has no dedicated long-term support branch or guaranteed response time.
 
 ## Scope
 
-Relevant components include publisher authentication, persisted nonces, visibility checks, transfer integrity, signed catalogues, peer-origin checks, speech authentication/resource admission and contract/service verification. See `docs/THREAT-MODEL.md` for known assumptions.
+Reports can cover publisher authentication, persisted nonce checks, resource visibility, transfer integrity, signed catalogs, peer-origin checks, speech authentication and admission, or verification by contracts and operator services. [Threat model](docs/THREAT-MODEL.md)
 
-Use the latest published source when reporting an issue, identifying the exact revision where it occurred. There is no separately maintained long-term support branch.
+## Operator guidance
 
-## Operator references
-
-The [operations manual](docs/OPERATIONS.md) covers draining, encrypted backup/restore and compromised identity handling. The [deployment guide](docs/DEPLOYMENT.md) covers preserving keys and volumes during updates. GPU inference stays on a private container network; expose the authenticated gateway through HTTPS for remote clients.
+The operations guide covers draining, encrypted backups, recovery and compromised identities. The deployment guide explains how to preserve keys and volumes during upgrades. Keep GPU inference on the private container network and expose the authenticated gateway through HTTPS for remote clients. [Operations](docs/OPERATIONS.md) · [Deployment](docs/DEPLOYMENT.md)

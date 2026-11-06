@@ -1,28 +1,30 @@
 # Three-node mesh acceptance
 
-Run on 2026-10-16 using Docker Engine29.8.2, Node.js24 and three isolated storage containers built from this checkout. The run used an independent `ats-mesh-verify-*` Compose project and fresh synthetic data volumes, then removed only that project's containers/volumes. It did not contact live storage, transfer real tokens, use user documents or touch other Docker projects.
+The 2026-10-16 acceptance run used Docker Engine 29.8.2, Node.js 24 and three isolated storage containers built from the checkout at the time. It created a fresh `ats-mesh-verify-*` Compose project with synthetic volumes and cleaned up only that project's containers and volumes.
 
-Reproduce from this repository:
+To reproduce on request from the repository root, install Node.js 24 or newer and Docker Compose, then run:
 
 ```sh
 ./scripts/verify-mesh-docker.sh
 ```
 
-Requires Node.js24+ on PATH and Docker Compose. `NODE_BINARY=/absolute/path/to/node` can override the host runtime. Override `VERIFY_MESH_A_PORT`, `VERIFY_MESH_B_PORT`, `VERIFY_MESH_C_PORT` if loopback18871–18873 are occupied. `VERIFY_MESH_LOG` sets the report filename (default `/tmp/ats-mesh-verification-*.log`). `KEEP_VERIFY_CONTAINERS=1` preserves the explicitly named test project on exit; the script prints its cleanup command.
+Set `NODE_BINARY=/absolute/path/to/node` to select a host runtime. Override `VERIFY_MESH_A_PORT`, `VERIFY_MESH_B_PORT` or `VERIFY_MESH_C_PORT` if loopback ports 18871–18873 are occupied. `VERIFY_MESH_LOG` sets the report filename and defaults to `/tmp/ats-mesh-verification-*.log`. Use `KEEP_VERIFY_CONTAINERS=1` to retain the named test project on exit. The script prints its cleanup command.
 
-Eight checks passed:
+## Recorded results
 
-1. Three provider identities survive recreation; pinned peers verify signed announcements.
-2. A publisher's fixed upload part survives container restart and is resumed correctly.
-3. A signed cross-node catalogue retains exact archive identity, publisher proof and original provider.
-4. Two replicas fully match the source SHA-256; private/unlisted publications are absent from public catalogues and forwarded descriptors.
-5. Stopping the original node leaves public discovery and replica range downloads available.
-6. Restarting another node repairs a durable partial copy from the remaining peer while the original is offline.
-7. A draining node rejects new uploads while continuing to serve retained copies.
-8. A reachable node with the wrong configured provider fingerprint is rejected.
+1. Three provider identities survived recreation. Pinned peers verified their signed announcements.
+2. The first fixed upload part survived a restart and the publisher resumed the upload.
+3. A signed cross-node catalog retained the exact archive identity, publisher proof and origin provider.
+4. Two replicas matched the source SHA-256. Public catalogs and forwarded descriptors excluded private and unlisted publications.
+5. Public discovery and replica range downloads continued after the origin stopped.
+6. Another node recovered a persistent partial copy from the remaining peer while the origin stayed offline.
+7. A draining node rejected new uploads and continued serving retained copies.
+8. A node reachable at the expected URL was rejected when its provider fingerprint differed from the configured pin.
 
-The replica-recovery check deterministically seeds a 65,536-byte durable prefix from a previously hash-verified replica while the node is stopped, sets its persisted state to `partial`, removes the final file, and restarts it. It verifies full reconstruction through peer fallback. This simulates the on-disk result of interruption without depending on timing a very fast local transfer; it does not claim the harness killed a naturally active transfer at a precise byte.
+For check 6, the runner seeded a 65,536-byte prefix from a previously verified replica while its node was stopped. It set the persisted state to `partial`, removed the finished copy and restarted the node. Full reconstruction through peer fallback demonstrates recovery from the resulting on-disk state. The run did not depend on interrupting a live transfer at a particular byte.
 
-Full local output: `/tmp/ats-mesh-verification-20261016-pass.log` on the verification host. Test fixtures verify outer archive magic and transport bytes; they are not valid signed playable audiobooks. The run does not establish physical independence of storage operators, Internet reachability, mainnet safety or permanent retention.
+The verification host retained the full output at `/tmp/ats-mesh-verification-20261016-pass.log`. The fixtures exercise archive magic and transport integrity. Valid signed playable archives, live storage, user documents, real tokens, Internet reachability, independent storage operators, mainnet safety and permanent retention are outside this record.
 
-`compose.full.yaml` is the three-node local mesh topology. It uses explicitly allowlisted HTTP service names with development-only private-peer permission. Public deployments require HTTPS origins, pinned peer identities and separate storage volumes. The chain/indexer/observer/settlement deployment is provided by `compose.services.yaml`; those services have their own manifests, keys and acceptance runner. This topology does not start or fund a real token network.
+## Development topology
+
+`compose.full.yaml` defines the local three-node topology. It allows explicitly configured HTTP service names and private addresses for development. For a public mesh, use HTTPS origins, pinned identities and separate storage volumes. Use `compose.services.yaml` for the separate chain, indexer, observer and settlement deployment and its own manifests, keys and acceptance runner.

@@ -1,6 +1,6 @@
 # Storage protocol and configuration
 
-This reference covers the storage node, publisher authentication, federation and funded retention receipts. For speech requests and API-key authentication, see the [VoxCPM2 endpoint contract](../tts/README.zh-Hant.md#app-介面契約).
+This reference describes storage, publisher authentication, peer discovery and funded retention. See the [speech API](../tts/README.md#speech-api) for VoxCPM2 request bodies and API key authentication.
 
 ## Configuration
 
@@ -10,19 +10,21 @@ This reference covers the storage node, publisher authentication, federation and
 | `NODE_DATA_DIR` | `./data` (`/data` in Docker) | Persistent private data directory |
 | `NODE_PUBLIC_URL` | `http://127.0.0.1:8787` | Origin placed in returned resource URLs |
 | `NODE_MAX_FILE_BYTES` | `1073741824` | Maximum publication, 1 GiB by default |
-| `NODE_OWNER_QUOTA_BYTES` | `10737418240` | Published plus active reserved bytes per key |
-| `NODE_TOTAL_QUOTA_BYTES` | `107374182400` | Published plus active reserved bytes for this node |
+| `NODE_OWNER_QUOTA_BYTES` | `10737418240` | Published and reserved bytes per key |
+| `NODE_TOTAL_QUOTA_BYTES` | `107374182400` | Published and reserved bytes across the node |
 | `NODE_MAX_ENTRIES` | `50000` | Total pending and completed publication records |
 | `NODE_MAX_OWNER_ENTRIES` | `1000` | Pending and completed publication records per key |
-| `NODE_UPLOAD_TTL_HOURS` | `168` | Incomplete upload lifetime; not extended on each request |
+| `NODE_UPLOAD_TTL_HOURS` | `168` | Lifetime of an incomplete upload, measured from creation |
 | `NODE_ADMIN_PUBLIC_KEYS` | empty | Comma-separated publisher **IDs**, each SHA-256 of raw public key, allowed to delete any publication |
-| `NODE_PROVIDER_ADDRESS` | empty | Optional `0x` Ethereum address included in evidence; ownership is verified externally |
+| `NODE_PROVIDER_ADDRESS` | empty | Optional `0x` Ethereum address in evidence. Verify wallet control separately |
 
-Maximum pending uploads per key: 32. Maximum simultaneously processed PUT requests: 4. Built-in request throttling: 1,200 requests/minute per immediate TCP peer. Behind a reverse proxy this peer may be the proxy itself; configure stronger public rate limiting there. The node deliberately does not trust arbitrary forwarded-IP headers. Metadata limits: title 300 characters, summary 4,000, language 64, 16 tags of 64 characters. Search accepts 200 characters and pages of 1–100 items.
+Each publisher can have up to 32 pending uploads. The node processes at most four part PUT requests simultaneously and allows up to 1,200 requests per minute per immediate TCP peer. Behind a reverse proxy, that peer can be the proxy itself. Apply public-facing rate limits at the edge. The node ignores arbitrary forwarded IP headers.
+
+Titles are limited to 300 characters, summaries to 4,000, language to 64, and tags to 16 entries of up to 64 characters each. Search accepts queries up to 200 characters and page sizes from 1 to 100.
 
 ## API and authentication
 
-All mutation endpoints and private metadata reads require these headers:
+Sign every mutation and every private metadata request using these headers:
 
 ```text
 X-ATS-Audience: canonical NODE_PUBLIC_URL origin, without trailing slash
@@ -32,7 +34,7 @@ X-ATS-Nonce: unique UUID
 X-ATS-Signature: base64(raw 64-byte signature)
 ```
 
-Sign the exact UTF-8 bytes below, with LF separators and no trailing newline:
+Construct the signature input as the exact UTF-8 bytes below. Use LF separators and omit the final newline.
 
 ```text
 ATS-NODE-V1
@@ -44,28 +46,28 @@ NONCE
 lowercase-hex-sha256-of-exact-body
 ```
 
-The audience must exactly match the node's configured public origin (scheme, host and non-default port, without a trailing slash). Binding the signature to that origin prevents a receiving node from replaying it at another node. Use the empty-body hash for GET. The publisher ID is lowercase hex SHA-256 of the raw public key. Nonces survive restart and cannot be reused while a timestamp could still be accepted. Public GET endpoints require no signature.
+The audience must match the configured public origin, including the scheme, host and any nondefault port, with no trailing slash. This binds each request to the intended node. Use the SHA-256 of an empty body for GET requests. A publisher ID is lowercase hexadecimal SHA-256 of the raw Ed25519 public key. The node persists nonces across restarts and rejects reuse while a matching timestamp could still be accepted. Public GET endpoints accept unsigned requests.
 
-| Method/path | Behavior |
+| Method and path | Behavior |
 |---|---|
 | `GET /health` | Health status |
 | `GET /v1/node` | Provider public identity, capabilities, limits and available disk |
 | `POST /v1/uploads` | Reserve capacity and initialize upload |
 | `GET /v1/uploads/:id` | Owner retrieves uploaded parts |
 | `PUT /v1/uploads/:id/parts/:index` | Owner uploads exact raw part bytes |
-| `POST /v1/uploads/:id/complete` | Owner validates/assembles, automatically publishes if public |
+| `POST /v1/uploads/:id/complete` | Assemble and validate the owner’s upload. Public resources become searchable on completion |
 | `DELETE /v1/uploads/:id` | Owner cancels incomplete upload |
-| `GET /v1/resources?q=&sort=recent&cursor=&limit=30` | Public catalogue; sort `recent`, `downloads` or `trending` |
-| `GET /v1/resources/:id` | Public/unlisted metadata, private owner metadata |
+| `GET /v1/resources?q=&sort=recent&cursor=&limit=30` | Public catalog sorted by `recent`, `downloads` or `trending` |
+| `GET /v1/resources/:id` | Resource metadata subject to visibility and caller access |
 | `GET /v1/resources/:id/download` | Download with optional single HTTP byte range |
 | `DELETE /v1/resources/:id` | Owner or configured moderator removes publication |
-| `POST /v1/resources/:id/downloads` | Create an owner-bound 24-hour download ticket |
+| `POST /v1/resources/:id/downloads` | Create a 24-hour download ticket bound to the requesting identity |
 | `POST /v1/downloads/:ticket/complete` | Report verified full download |
 | `GET /v1/resources/:id/evidence` | Signed, time-stamped node storage self-attestation |
 | `GET /v1/mesh/announcement` | Signed node announcement, draining state and configured peer identities |
 | `GET /v1/mesh/snapshot?cursor=0` | Signed public-only descriptors and replica inventory, 100 items/page |
-| `GET /v1/mesh/resources?q=&sort=recent&cursor=0&limit=30` | Signed merged catalogue, timestamps and safe fallback sources |
-| `GET /v1/mesh/status` | Peer health, bounded catalogue and observed replica state |
+| `GET /v1/mesh/resources?q=&sort=recent&cursor=0&limit=30` | Signed merged catalog, timestamps and safe fallback sources |
+| `GET /v1/mesh/status` | Peer health, bounded catalog and observed replica state |
 | `GET /v1/mesh/objects/:key` | Hash-verified public replica with HTTP byte ranges |
 | `POST /v1/mesh/sync` | Signed configured administrator schedules a reconciliation |
 | `GET /v1/stats` | Aggregate publication/replica bytes, active leases and drain state |
@@ -73,7 +75,9 @@ The audience must exactly match the node's configured public origin (scheme, hos
 | `POST /v1/retention/orders` | Publisher acknowledges a funded lease signed by a pinned settlement service |
 | `GET /v1/retention/orders` | Publisher lists its own active/expired orders |
 
-Initialize with JSON:
+### Upload and visibility
+
+Send JSON to `POST /v1/uploads`:
 
 ```json
 {
@@ -88,33 +92,55 @@ Initialize with JSON:
 }
 ```
 
-Visibility is `public`, `unlisted` or `private`. Public metadata is searchable immediately after successful completion. Unlisted content is accessible by ID but excluded from catalogue queries. Private content requires owner signatures; an owner-created download ticket additionally grants narrowly scoped download access to anyone holding its URL until expiry. Keep that URL secret and never publish it as a public source. Deleting data cannot recall copies already downloaded or indexed elsewhere.
+Set `visibility` to `public`, `unlisted` or `private`.
 
-An upload/status response contains `id`, `partSize`, `byteCount`, `sha256`, `expiresAt` and `parts`, where each part has `index`, `sha256`, `byteCount`. Resuming clients must check the local immutable payload hash and every server-reported part hash before skipping parts. Indices start at zero; only the final part may be shorter. Repeating identical part bytes is safe; a conflicting hash for an existing index is rejected. Completion can be retried and returns the same resource. Incomplete uploads expire after the configured lifetime.
+Public records enter search as soon as the upload completes. An unlisted record is accessible by ID and stays out of catalog queries.
 
-Completed resources have `id`, `title`, `summary`, `language` (nullable), `tags`, `sha256`, `byteCount`, `sources`, `encrypted`, `publisherID`, `createdAt` (ISO-8601), `downloads`, `visibility`. Lists return `{ "items": [...], "nextCursor": null }`, or a cursor string for another page. Pagination uses offsets over the current ranking; results may move during concurrent publishing or downloads. Clients should deduplicate IDs. Search is bounded case-insensitive SQLite substring search for ASCII text, not a language-aware full-text engine.
+For private resources, sign as the owner or use an owner-issued download ticket. A ticket grants temporary access to the named object to anyone who holds its URL. Keep ticket URLs private. Deletion applies to the local node and cannot recall downloaded copies or externally indexed metadata.
 
-For observed downloads, create a ticket with a signed POST and `{}` body. Use its `downloadURL` for all full/range requests. After hashing and validating the file, send signed JSON `{ "sha256": "..." }` to the completion endpoint. The server requires finished response ranges covering every byte, stores at most 1,024 merged response ranges per ticket and deduplicates one identity/resource/day, and returns `{ "counted": true, "downloads": 1 }`. Interrupted transfers, repeated ranges and direct anonymous GETs do not each add a count. The figure is an observation of participating identities, not verified humans, all network downloads, token-earning work, or proof of listening. Trending uses a 30-day window and diminishing weight with a two-day time scale; it is an approximate local activity ranking, not exponential half-life or global consensus.
+Upload initialization and status return `id`, `partSize`, `byteCount`, `sha256`, `expiresAt` and `parts`. Each part includes `index`, `sha256` and `byteCount`. Compare the fixed local payload hash and every reported part hash before skipping previously uploaded parts. Indices start at zero. Only the final part can be shorter than `partSize`. Replaying identical part bytes is safe, but a new hash at an occupied index is rejected. Retrying completion returns the same resource. Unfinished uploads expire at the configured lifetime.
 
-The archive magic and outer hash are checked by this service; full manifest, signature, decryption and media validation happen in ATS. The node stores encrypted packages without receiving their content keys. Public titles, summaries, tags and file sizes remain visible.
+Completed resources include `id`, `title`, `summary`, nullable `language`, `tags`, `sha256`, `byteCount`, `sources`, `encrypted`, `publisherID`, ISO 8601 `createdAt`, `downloads` and `visibility`. Catalog responses include `items` and `nextCursor`, which is null on the final page. The cursor represents an offset into the current ranking. Deduplicate IDs because concurrent publishing and downloads can reorder results. Search uses bounded SQLite substring matching with case folding for ASCII.
+
+The node checks the archive magic and outer hash. ATS validates the full manifest, signature, decryption and media. Encrypted packages are stored without content keys. A public package still exposes its title, summary, tags and size.
+
+### Downloads and local ranking
+
+1. Create an observation ticket with a signed POST and an empty JSON object.
+2. Fetch the full object or its ranges through the returned `downloadURL`.
+3. Validate the bytes and SHA-256, then send signed JSON `{ "sha256": "..." }` to the completion endpoint.
+
+The node requires completed response ranges covering every byte. It tracks up to 1,024 merged ranges per ticket and deduplicates completions per identity, resource and day. A counted response has the form `{ "counted": true, "downloads": 1 }`. Interrupted transfers, repeated ranges and anonymous direct GET requests cannot each add a count. Counts reflect observed deliveries to participating identities. Trending ranks this local activity over 30 days with a diminishing weight on a two-day time scale.
 
 ### Signed federation and replica sources
 
-Mesh envelopes use `{payloadBytes,publicKey,signature}`. `payloadBytes` is standard padded base64 of the **exact** UTF-8 JSON bytes; `publicKey` and `signature` are standard base64 of raw 32-byte Ed25519 and 64-byte signature. Verify those original bytes before parsing; reserializing JSON is not a signature-verification procedure. A provider ID is lowercase SHA-256 of the raw key. Node keys are pinned by operators in `NODE_PEERS=[{"url":"https://peer.example","providerID":"64hex"}]`. Snapshots require a fresh timestamp and the expected signer/origin; forwarded publication descriptors retain the original node signature and exact publisher-authenticated upload request. Legacy publications without that retained request can still be listed locally but are not exported as authenticated mesh publications.
+A mesh envelope contains `payloadBytes`, `publicKey` and `signature`. The payload is standard padded Base64 of the original UTF-8 JSON. The key and signature are standard Base64 of the raw 32-byte Ed25519 key and 64-byte signature. Verify the original payload bytes before parsing JSON. The provider ID is lowercase hexadecimal SHA-256 of the raw key. Configure pins in `NODE_PEERS=[{"url":"https://peer.example","providerID":"64hex"}]`.
 
-`/v1/mesh/resources` signs `{schemaVersion:1,type:"ats-mesh-catalogue-v1",providerID,issuedAt,expiresAt,items,nextCursor,rankingScope,federation}`. Timestamps are Unix seconds, and expiry is five minutes. The base resource fields remain compatible with `/v1/resources`, which returns the same page without the envelope. Federated items additionally provide `originProviderID`, `originURL`, `publisherAuthentication`, `originDescriptor`, and `replicas`. Each replica contains `{providerID,url,sourceResourceID,verifiedAt,status:"hash-verified-custody"}`. Sources are derived from configured origins and signed inventories, never arbitrary descriptor URLs. Client trust in the selected catalogue node is explicit: catalogue signatures authenticate its observations, not the honesty or physical independence of operators. Origin descriptors separately prove the publisher request and original node assignment. Download figures and Trending remain **local observed activity**; remote totals are not aggregated into an apparent network-wide statistic.
+Snapshots require a fresh timestamp and the expected signer and origin. Forwarded publications retain the origin node signature and the exact publisher-authenticated upload request. Legacy publications missing that request are available only in the local catalog.
 
-Mesh configuration: `NODE_DESIRED_REPLICAS=2`, `NODE_MESH_INTERVAL_SECONDS=60`, `NODE_REPLICA_QUOTA_BYTES=10737418240` (capped by the total quota), `NODE_PEER_STALE_SECONDS=3600`, `NODE_DRAIN=0`. Set `NODE_ALLOW_PRIVATE_PEERS=1` only for explicit development peer origins; this also permits HTTP configured development origins. Production peer requests require HTTPS, resolve DNS before each request and bind connections to the checked address; redirects and public peers resolving to private addresses are rejected. This is a permissioned peer allowlist, not permissionless Internet crawling.
+`/v1/mesh/resources` signs `{schemaVersion:1,type:"ats-mesh-catalogue-v1",providerID,issuedAt,expiresAt,items,nextCursor,rankingScope,federation}`. Timestamps are Unix seconds and the signature envelope expires after five minutes. `/v1/resources` returns the same page without the envelope. Federated entries add `originProviderID`, `originURL`, `publisherAuthentication`, `originDescriptor` and `replicas`. Each replica has `{providerID,url,sourceResourceID,verifiedAt,status:"hash-verified-custody"}`.
 
-The catalogue accepts at most 1,000 remote descriptors, 32 pinned peers, 100 entries per snapshot page and 1,000 descriptors per peer reconciliation. Local snapshot exports are also limited to 1,000 descriptors. Operators needing larger discovery coverage should shard catalogues rather than silently assume a complete Internet index. Reconciliation uses deterministic placement among this node and currently reachable allowlisted peers. It cannot establish separate physical storage or separate operators. Stale public metadata/replicas expire after a seven-day grace period; forwarded records preserve original signatures. Origin deletions are retained as tombstones, but cannot recall files already copied outside this mesh. Observed origin tombstones prevent later reintroduction of that version from another peer for up to 30 days, bounded by `NODE_MAX_ENTRIES`; independent copies and older caches cannot be recalled.
+The selected catalog node signs its observations. Origin descriptors independently authenticate the publisher request and originating node assignment. Sources come from configured origins and signed inventories. Download counts and Trending retain their local scope across federation.
 
-Replica transfer persists a reservation and `.partial` file, resumes with Range and exact ETag/content-range checks after restart, and only promotes a file after verifying its entire length, SHA-256 and archive magic. Available peer replicas provide fallback when the original publisher node is offline. Reconciliation checks online candidates and repairs eligible missing copies, subject to quotas. A draining node continues serving existing objects and refuses new uploads, new retention orders and automatic replica assignments. **Custody observations are not independent replica proofs.** There is no guarantee that all configured nodes are separate operators or have independent disks.
+| Mesh setting | Default |
+| --- | --- |
+| `NODE_DESIRED_REPLICAS` | `2` |
+| `NODE_MESH_INTERVAL_SECONDS` | `60` |
+| `NODE_REPLICA_QUOTA_BYTES` | `10737418240`, capped by the total quota |
+| `NODE_PEER_STALE_SECONDS` | `3600` |
+| `NODE_DRAIN` | `0` |
+
+Use `NODE_ALLOW_PRIVATE_PEERS=1` only for explicit development origins, including allowed HTTP origins. Production peers use HTTPS. The node resolves each request destination and pins the connection to the checked address. It rejects redirects and public peers that resolve to private addresses.
+
+The mesh supports up to 32 pinned peers, 1,000 remote descriptors, 100 entries per snapshot page and 1,000 descriptors per peer reconciliation. A local snapshot exports up to 1,000 descriptors. Shard catalogs when those limits are insufficient. Placement is deterministic across the current node and reachable allowed peers. Stale public metadata and replicas expire after a seven-day grace period. Forwarded records retain their original signatures. An observed origin tombstone blocks reintroduction of that version for up to 30 days, subject to `NODE_MAX_ENTRIES`.
+
+Replica downloads persist a reservation and a `.partial` file. On restart, the node resumes with Range and exact ETag and Content-Range checks. It promotes a copy after verifying the complete length, SHA-256 and archive magic. Available replicas can serve as fallbacks when the origin is offline, and reconciliation repairs eligible copies within quota. A draining node serves existing copies while declining uploads, new retention orders and automatic placements. Verified custody describes a copy served by a pinned node. Independent hardware or operators require separate verification.
 
 ### Funded retention acknowledgement
 
-A signed publisher sends `{"resourceID":"uuid","retainUntil":<Unix seconds>}` to `/v1/retention/quotes`. The node signs a quote valid for 15 minutes, with `quoteID`, publisher/provider/resource identity, archive digest and bytes, requested retention and `priceMode:"external-settlement-required"`. The duration is between one hour and 366 days. This quote does not reserve funds or itself establish payment.
+Send signed JSON `{"resourceID":"uuid","retainUntil":<Unix seconds>}` to `/v1/retention/quotes`. Retention can run from one hour to 366 days. The node returns a signed quote valid for 15 minutes. It includes `quoteID`, the publisher, provider and resource IDs, the archive hash and size, the requested retention time and `priceMode:"external-settlement-required"`. Funding takes place separately.
 
-After an external settlement integration confirms a funded chain order, the publisher sends `{"quoteID":"uuid","settlementReceipt":<signed envelope>}` to `/v1/retention/orders`. Only signers in `NODE_SETTLEMENT_PUBLIC_KEYS` (comma-separated raw-key SHA-256 fingerprints) are accepted; no configured signer means no receipt can be accepted. The receipt payload is:
+After a settlement integration confirms the funded chain order, send signed JSON `{"quoteID":"uuid","settlementReceipt":<signed envelope>}` to `/v1/retention/orders`. Configure `NODE_SETTLEMENT_PUBLIC_KEYS` with comma-separated SHA-256 fingerprints of trusted raw public keys. The node rejects every receipt until an issuer is configured. The receipt payload has this form:
 
 ```json
 {
@@ -135,4 +161,4 @@ After an external settlement integration confirms a funded chain order, the publ
 }
 ```
 
-The node enforces exact quote/resource binding, owner acknowledgement, receipt freshness, chain/market/service-order replay isolation, monotonically increasing lease nonces and nondecreasing renewal expiry. Identical accepted receipts are idempotent while the quote remains valid. It blocks publisher/admin deletion while any accepted lease is active; expired orders remain visible as expired. It does not delete an expired publication automatically: the lease describes the funded commitment, and ordinary best-effort retention can continue. Renewals require a fresh quote and newly funded receipt. The settlement authority is an explicit trust boundary; a node does not infer payment from a client-supplied transaction hash. No public/private visibility change or public indexing is implied by purchasing retention.
+The node checks the exact quote and resource binding, owner acknowledgement, receipt freshness, replay scope across chain, market and service order, strictly increasing lease nonces and nondecreasing renewal expiry. It accepts an identical receipt idempotently while the quote remains valid. An active lease blocks publisher and administrator deletion. Expired orders stay visible and best-effort storage may continue. Renew through a fresh quote and a newly funded receipt. Settlement authorization comes from the pinned issuer. Retention preserves the existing visibility and indexing policy.

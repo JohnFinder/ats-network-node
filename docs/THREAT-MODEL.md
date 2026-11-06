@@ -2,49 +2,47 @@
 
 ## Protected assets
 
-Archive bytes and visibility; signing keys; operator disk/bandwidth; upload ownership and replay state; service deposits, provider bonds, bounty budgets and reward budgets. Public metadata is intentionally public. EVM contracts and transaction calldata are public even if a Solidity field is called private.
+The node protects archive integrity and visibility, signing keys, operator disk and bandwidth, upload ownership and replay state. Contracts track service deposits, provider bonds, bounty funds and reward budgets. Public metadata, EVM transactions and contract state are visible, including values stored in Solidity fields declared private.
 
 ## What the node verifies
 
-- Domain-separated Ed25519 signatures cover configured target origin (audience), method, request target, timestamp, nonce and exact body hash.
-- Signed timestamps have a five-minute window; nonces are stored across restart for longer than the acceptance window.
-- Owner-specific opaque IDs prevent a private publication from becoming public merely because another user supplies the same content hash.
-- Upload reservations account for pending and published bytes; requests and part buffers are bounded. Per-owner limits raise costs but are not one-person quotas: an attacker can generate keys. Total node quota and operator admission policy remain essential.
-- Parts have fixed offsets and hashes. Completion recomputes every part hash, whole-file digest, size and outer ATSBOOK1 magic before indexing.
-- Full archive signature, manifest schema, decryption and media acceptance remain the ATS client's responsibility. A magic prefix is not a content safety or rights proof.
-- Private metadata requires authentication. Private download tickets are temporary bearer capabilities scoped to one file: possession permits downloading until expiry. They must never enter logs, public indexes or referral metadata.
-- No URL supplied by a publisher is fetched by the server; the node does not act as an arbitrary HTTP proxy.
+- Domain-separated Ed25519 signatures bind the configured target origin, method, exact request target, timestamp, nonce and hash of the exact body. Timestamps have a five-minute acceptance window. The node retains used nonces across restart for longer than that window.
+- Publication IDs are opaque and owner-specific. Publishing bytes with an existing private file's hash does not expose the private publication.
+- Reservations count both pending and completed storage. The node bounds request sizes and part buffers. Attackers can generate identities, so operators also need node-wide quotas and admission controls.
+- Parts have fixed offsets and hashes. Before indexing, completion checks each part, the full archive SHA-256 and byte count, and the `ATSBOOK1` prefix. ATS separately validates manifest schema, full archive signatures, decryption and media.
+- Private metadata requires authentication. An owner-issued bearer download ticket grants temporary access to one file. Keep ticket URLs out of logs, public indexes and referrer metadata.
+- Peer transfers use configured and verified origins. Publisher-supplied URLs cannot turn the node into an HTTP proxy.
 
 ## Trust that remains
 
-An operator can delete data, lie about availability or modify local ranking. A signed statement proves what that operator said. The local chain verifier additionally downloads and hashes the file at verification time; this is not continuous storage, physical location, independent-replica or network-consensus proof.
+Operators control the bytes they retain and the rankings they publish. A signature identifies the author of an availability statement. The local chain verifier also retrieves and hashes the bytes at verification time. Long-term storage, geographic location, independent replicas and consensus all require additional evidence.
 
-Download counters are observations of signed identities and completed server response ranges. Sybil identities and colluding endpoints can manufacture activity; counters must never authorize minting or subsidy settlement. The node does not prove a person listened or that the client durably saved the response.
+Download counts reflect signed identities and completed server response ranges. A Sybil attacker or colluding operators can manufacture activity. Counters carry no minting or subsidy authorization and cannot establish listening or durable storage by the client.
 
-Bootstrap contracts use an administrator and a threshold committee of trusted attestors. Attestors authorize observations; they can collude. The administrator chooses committee members and reward roots and can cancel proposed epochs. Delay windows enable inspection but are not an implemented decentralized dispute court. Unavailable committees can delay service acceptance/settlement; expired escrow can be refunded under contract rules. No automatic slashing for a one-sided network timeout is implemented.
+Bootstrap contracts trust an administrator and a threshold committee of attestors. The administrator controls committee membership and reward roots and can cancel proposed epochs. Delay windows allow review. Committee outages can delay service acceptance and settlement, and expired escrow can be refunded under contract rules. A one-sided timeout does not trigger automatic slashing. Dispute procedures depend on the configured authority.
 
-The test token is fixed-supply and preminted, with no upload/download mint endpoint. Service, bond, bounty and reward liabilities are tracked separately and checked during acceptance. This limits authorized payouts; it does not replace an independent contract audit, prove revenue, or guarantee token value.
+The test currency is preminted with a fixed supply. Service, bond, bounty and reward balances are tracked separately. The acceptance checks reconcile liabilities against balances. Contract audits, evidence of revenue and token valuation are separate questions.
 
 ## Identity and privacy
 
-ATS archive/device keys use Ed25519. EVM wallets use different keys and addresses. NODE_PROVIDER_ADDRESS is a declaration only; it is not proof of control. V2 requires a domain-scoped Ed25519 proof and EVM typed authorization plus confirmed state. A wallet signature alone does not prove the Ed25519 key and vice versa. Public-chain deployment remains unvalidated until explicitly deployed and reviewed. An anonymous name is not network anonymity: nodes observe IP connections and public chains expose transactions.
+ATS uses Ed25519 for archive and device identities. EVM wallets have their own keys and addresses. `NODE_PROVIDER_ADDRESS` is an operator declaration. V2 verifies wallet control with domain-scoped Ed25519 proof, EVM typed authorization and confirmed contract state. A public-chain deployment needs its own deployment verification. Nodes observe IP connections, and public chains expose transactions even when users choose pseudonyms.
 
-Encrypted packages remain encrypted end to end only while content keys remain private. Public titles, summaries, tags, archive sizes and publishing identity are visible. Recipients can redistribute keys or plaintext. Deletion only controls this operator's bytes and index; it cannot recall external copies or remove chain history.
+Encrypted packages remain confidential while their keys stay private. Public titles, summaries, tags, sizes and publishing identities remain visible. Recipients can share keys or plaintext. A local deletion affects the operator's bytes and index. Other copies and chain history can survive.
 
 ## Deployment assumptions
 
-One process owns one SQLite database/data directory. Do not run concurrent replicas against the same volume. Use the HTTPS overlay or an equivalent trusted reverse proxy; publicURL comes from explicit configuration, not the Host header. The default Compose binding is loopback. The local chain overlay is developer-only with public deterministic keys and must never be Internet-exposed or receive real assets.
+Run a single writer per SQLite database and data directory. The default Compose binding is loopback. Use the HTTPS overlay or a trusted reverse proxy for public access. The configured public origin controls returned URLs independently of the request's Host header. Keep the local chain overlay and its deterministic development keys away from the Internet and real assets.
 
-The data volume includes the operator private signing key, database and objects. Back it up consistently and protect access. Upload expiry is not a promise of paid long-term retention; completed files remain subject to operator capacity and removal unless an explicit funded retention agreement is in force; even then continued service requires independent monitoring and recovery.
+The volume contains the operator's signing key, database and objects. Restrict access and take consistent encrypted backups. Upload expiry governs unfinished transfers. Completed files remain subject to operator capacity and removal. Funded retention creates an explicit commitment that needs monitoring and recovery.
 
 ## Implemented V2 boundaries
 
-Pinned federation and replica repair depend on trusted origin keys and bounded configured peers. No arbitrary publisher URL is fetched. Replica existence/HTTP retrieval does not establish unique hardware, independent ownership or continuous custody. Signed catalogues authenticate their issuing node; local rankings are not global consensus.
+Pinned federation and replica repair depend on trusted origin keys and a bounded peer allowlist. Catalog signatures authenticate the issuer. Replica responses establish retrievability at a given time. Local rankings reflect node observations.
 
-The replaceable chain indexer validates a selected manifest/RPC chain ID and runtime code, tracks confirmed canonical blocks and rewinds reorged events. Offchain material must match the committed metadata hash. Observers must isolate evidence by canonical order/period to avoid reusing observations after reorganization. Pending or stale events cannot authorize payment.
+A replaceable indexer verifies the selected manifest, RPC chain ID and runtime code, tracks confirmed canonical blocks and rewinds reorganized events. Off-chain data must match its committed hash. Observers should bind evidence to the canonical order and period to avoid reusing observations after a reorganization. Only current confirmed events can authorize settlement.
 
-Committee reports, dispute resolution and prefunded reward roots retain disclosed administrator trust. Threshold processes running on one development host are not independent organizations. Withdrawal/reward liabilities and period budgets are bounded by deposited test tokens; this is not audited monetary security. No mainnet or publicly funded operation has been performed.
+Committee reports, disputes and prefunded reward roots depend on disclosed administrator and committee roles. Threshold processes on one host share a failure domain. Deposited test tokens cap liabilities and period budgets. No mainnet or publicly funded deployment is recorded here.
 
-The official Filecoin PDP adapter delegates established storage commitments to that network. Local adapter/mocked checks are not proof that a live Filecoin provider stored a specific archive. Live upload requires explicit funded execution and retention monitoring.
+The Filecoin PDP adapter delegates storage commitments to the external network. Local adapter checks exercise integration and guardrails. A live commitment requires funded execution and ongoing proof observation.
 
-Remaining external gates include independent security/economic review, real independent operators and funding, content/license adjudication and storefront policy review. Native device P2P, decentralized committee selection and unique physical-replica proofs are not implemented. The App uses configured federated HTTPS peers; that transport must not be advertised as native libp2p. Client archive downloads restart as whole verified transfers; node replica transfers persist ranges.
+Production still requires independent security and economic review, independent operators, funding, rights adjudication and storefront review. The app uses configured federated HTTPS peers. Native device P2P, decentralized committee selection and unique physical replica proofs remain outside this design. The client restarts whole archive downloads, while node replicas persist ranges across retries.

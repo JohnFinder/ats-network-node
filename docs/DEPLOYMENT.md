@@ -1,58 +1,58 @@
 # Deployment, upgrade and recovery
 
-Run commands from the standalone `ats-network-node` repository root. [繁體中文快速入門](QUICKSTART.zh-Hant.md) and the [GPU guide](../tts/README.zh-Hant.md) provide first-install examples. Commands below are operator instructions, not evidence that a deployment has been performed.
+Run the deployment commands from the root of the standalone `ats-network-node` repository or the extracted source package. For a first installation, follow the [quickstart](QUICKSTART.md) or the [GPU guide](../tts/README.md).
 
 ## Deployment inputs
 
-| Input | Purpose |
+| Input | What it controls |
 | --- | --- |
 | `.env` | Public origins, quotas, peer pins, concurrency and resource limits |
-| `secrets/tts_api_key` | Private speech gateway key, preserved across updates |
-| `tts/voxcpm2.yaml` | Engine context, KV budget, device and runtime configuration |
-| Compose project name and overlays | Identify the existing services, networks and persistent volumes |
+| `secrets/tts_api_key` | Existing private speech gateway credential |
+| `tts/voxcpm2.yaml` | Engine context, KV cache budget, device and runtime settings |
+| Compose project name and overlay list | Selection of containers, networks and persistent volumes |
 | Data volumes | Storage identity, SQLite state, publications and optional service identities |
-| `tts-model-cache` | Model and compilation cache for GPU deployments |
+| `tts-model-cache` | GPU model and compilation cache |
 
-Do not commit private inputs or replace an existing `.env` with `.env.example`. Every process sharing a writable data volume must be stopped before a filesystem backup. See the [encrypted backup procedure](OPERATIONS.md#backup-and-restore).
+Keep deployment credentials outside Git. When updating an existing node, merge new settings into its `.env`. Stop every process that writes to a volume before taking a filesystem backup. Follow the [encrypted backup procedure](OPERATIONS.md#backup-and-restore).
 
 ## Upgrading an existing node
 
-1. Record the running source revision, image references, Compose project name, overlay list, data volume names and custom YAML settings. Retain rollback images and a consistent encrypted backup.
-2. Fetch the desired source into a separate checkout or staging directory. Review the change log and compare `.env.example`, Compose files and engine YAML with your deployment. Copy new code while preserving existing private inputs and merging resource tuning.
-3. Set `TTS_MAX_CONCURRENT` to the desired value in 1–128. The default is 8. A nonempty shared override changes gateway admission, engine sequences and decode graph batch capacity together; a separate graph override can reduce graph capacity. For independently configured YAML engine limits, follow the precedence example in the [GPU guide](../tts/README.zh-Hant.md#部署並發參數).
-4. Rebuild and recreate affected containers using the same Compose project name and complete overlay list as before. The standard GPU helper is `sh scripts/start-gpu-node.sh`; a public GPU deployment retains `--public`. For customized deployments use the original Compose invocation, including custom overlays. Changing a checkout directory must not silently change the project name or select empty replacement volumes.
-5. Check container health and logs. Gateway logs show `max_concurrent`; engine logs show `max_num_seqs` and `decode_graph_max_batch_size`. Storage `/health` checks the storage process; gateway `/health` alone does not establish GPU readiness. Authenticated `/v1/models` checks engine readiness. An authorized synthetic speech request is a separate operator acceptance step.
+1. Record the source revision, image references, Compose project name, overlay list, data volume names and custom engine settings. Keep the previous images and a consistent encrypted backup.
+2. Fetch the new source into a separate checkout or staging directory. Review the change log and compare the example environment, Compose files and engine YAML against your deployment. Merge any new settings while preserving credentials and hardware tuning.
+3. For GPU deployments, choose `TTS_MAX_CONCURRENT` between 1 and 128. The default is 8. A nonempty override changes gateway admission, engine sequence capacity and decode graph batch capacity together. Set a separate graph override to reduce only graph capacity. See [deployment concurrency](../tts/README.md#deployment-concurrency).
+4. Rebuild and recreate the affected containers with the same Compose project name and complete overlay list. Use `sh scripts/start-gpu-node.sh` for the standard GPU stack, with `--public` for a public deployment. For a customized stack, retain the original Compose invocation and custom overlays. When switching checkout directories, set the existing project name explicitly so Compose selects the original volumes.
+5. Check container health and logs. Gateway logs show `max_concurrent`. Engine logs show `max_num_seqs` and `decode_graph_max_batch_size`. Storage `/health` checks the storage process. Use the authenticated `/v1/models` route to check engine readiness, then send a synthetic speech request if synthesis acceptance was requested.
 
-Recreating the engine interrupts in-flight synthesis. Coordinate that interruption with clients. Preserve the existing speech API key so authorized clients keep their configured credential.
+Recreating the engine interrupts requests in progress. Coordinate the maintenance window with clients and preserve the API key their configurations already use.
 
 ## Capacity and overload
 
-128 is the maximum configurable admission/sequence value. It does not guarantee 128 resident long requests or a particular throughput. KV cache is explicitly 6 GiB in the supplied YAML and does not grow automatically with the sequence count. Account separately for model weights, CFM, AudioVAE, graph pools and other GPU processes. Tune `max_model_len`, `max_num_batched_tokens` and KV budget on the target hardware.
+The maximum configured capacity is 128 sequences. Actual throughput and the number of long requests the GPU can serve depend on the workload and the hardware. The supplied YAML allocates 6 GiB for KV cache independently of the sequence count. Budget memory for model weights, CFM, AudioVAE, graph pools and other GPU processes. Tune `max_model_len`, `max_num_batched_tokens` and the KV budget on the target host.
 
-`TTS_CUDA_GRAPH_MAX_BATCH_SIZE` can reduce graph capacity without reducing gateway admission. It does not bound the other model allocations. Gateway memory/CPU limits are independently configurable; simultaneous reference WAV uploads increase host RAM and JSON processing demand.
+Set `TTS_CUDA_GRAPH_MAX_BATCH_SIZE` to reduce the decode graph budget while keeping the gateway's admission limit. The engine allocates other model memory separately. Set gateway memory and CPU limits independently, accounting for simultaneous reference WAV uploads and JSON processing.
 
-At admission capacity the gateway rejects new synthesis with HTTP 429 and `Retry-After: 2`. Clients should honor that delay and limit their own concurrency. The gateway does not create an unlimited waiting queue. Configuring the ATS client to 128 cannot override a server configured to 8.
+At capacity, the gateway returns HTTP 429 with `Retry-After: 2`. Clients should honor that delay and limit their own concurrency. Server settings control admission regardless of the capacity set in ATS.
 
-`TTS_TIMEOUT_SECONDS` defaults to 180 and accepts 5–600. If increased for a public node, adjust `Caddyfile.gpu`'s 190-second response header timeout and any external proxy/client deadlines as appropriate.
+`TTS_TIMEOUT_SECONDS` defaults to 180 and accepts 5–600. If you increase it for a public node, review the 190-second response header timeout in `Caddyfile.gpu` and any external proxy and client deadlines.
 
 ## Troubleshooting
 
-| Symptom | Check |
+| Symptom | What to check |
 | --- | --- |
-| HTTP 401 | Correct endpoint and existing API key; mounted key readability and configured secret group |
-| HTTP 429 | Gateway admission is full; honor retry delay and compare client/server capacity |
-| HTTP 503 / model not ready | Engine health, model download/compilation progress, configured private upstream and engine logs |
-| HTTP 504 | Gateway timeout, GPU saturation and proxy/client deadlines |
-| Engine refuses configuration | Integer values 1–128; graph capacity must not exceed sequence capacity; valid single-stage YAML |
-| CUDA OOM or high latency | KV/context settings, graph/CFM/VAE allocations and other GPU services; lower capacity and inspect target-host metrics |
-| Identity or catalogue appears different after update | Compose project and volume selection; never initialize over or delete the original volume as a repair shortcut |
+| HTTP 401 | Endpoint, API key, mounted key permissions and secret group |
+| HTTP 429 | Current admission load and the client's retry and concurrency settings |
+| HTTP 503 or model unavailable | Engine health, model download or compilation progress, private upstream and engine logs |
+| HTTP 504 | Gateway timeout, GPU saturation and proxy or client deadlines |
+| Engine rejects settings | Integer limits between 1 and 128, graph capacity at or below sequence capacity, and valid single-stage YAML |
+| CUDA out of memory or high latency | KV and context budget, graph, CFM and AudioVAE allocations, and other GPU processes |
+| Identity or catalog changes after an update | Compose project and volume names. Locate and preserve the original volume before proceeding |
 
-Do not publish request bodies, API keys, voice references or private ticket URLs when sharing logs.
+Remove request bodies, credentials, voice references and private ticket URLs from shared diagnostics.
 
 ## Rollback
 
-Use the previously recorded source and images with the original overlays, configuration and volume names. A previous gateway with a lower concurrency limit may reject a newer value: restore its compatible deployment settings too. Restore a backup only when required for an incompatible state migration, to a new empty volume using the operations runbook; never run restored and original identities concurrently. Contract deployments and paid orders are separate from container rollback and must continue to use their reviewed manifests and matching runtime code.
+Restore the recorded source and images with their original overlays, settings and volume names. Restore the previous concurrency value if the old gateway only accepts a lower limit. If an incompatible state migration requires backup recovery, restore to a new empty volume following the [operations runbook](OPERATIONS.md#backup-and-restore). Run only one copy of each provider identity. Keep the reviewed deployment manifests and matching runtime code for any contracts and paid orders, which have a separate lifecycle from containers.
 
 ## Validation policy
 
-This publication has static source, metadata and documentation checks only. It does not establish GPU performance or a live HTTPS deployment. GitHub acceptance is manual only. Run build, acceptance or benchmark workloads only after an explicit operator request, and record their exact source revision and target environment.
+GitHub acceptance runs on manual dispatch. Run builds, acceptance and benchmarks after an explicit operator request. Record the source revision, environment and workload in any result. See the [storage validation record](VALIDATION.md) and [GPU validation record](../tts/VALIDATION.md) for the scope of prior checks.
