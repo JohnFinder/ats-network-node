@@ -26,7 +26,8 @@ services:
         condition: service_healthy
     read_only: true
     tmpfs:
-      - /tmp:rw,noexec,nosuid,size=32m
+      # Two bounded encoder jobs; the limit is a ceiling, not preallocated RAM.
+      - /tmp:rw,noexec,nosuid,size=512m
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     mem_limit: ${TTS_GATEWAY_MEMORY_LIMIT:-1g}

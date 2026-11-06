@@ -1,0 +1,32 @@
+# Isolated from public audiobook storage and mesh; never mount their data here.
+services:
+  voice-market:
+    build:
+      context: .
+      dockerfile: voice-market/Dockerfile
+    init: true
+    restart: unless-stopped
+    ports: ["127.0.0.1:${VOICE_MARKET_PORT:-8793}:8793"]
+    environment:
+      VOICE_MARKET_PORT: "8793"
+      VOICE_MARKET_DATA_DIR: /data
+      VOICE_MARKET_PUBLIC_URL: ${VOICE_MARKET_PUBLIC_URL:-http://127.0.0.1:${VOICE_MARKET_PORT:-8793}}
+      VOICE_MARKET_SANDBOX_ENABLED: ${VOICE_MARKET_SANDBOX_ENABLED:-0}
+      VOICE_MARKET_ADMIN_SUBJECTS: ${VOICE_MARKET_ADMIN_SUBJECTS:-}
+      VOICE_MARKET_MODERATION_CONTACT_URL: ${VOICE_MARKET_MODERATION_CONTACT_URL:-}
+      VOICE_MARKET_OPERATOR_SUBJECT: ${VOICE_MARKET_OPERATOR_SUBJECT:-}
+      VOICE_MARKET_PLATFORM_SUBJECT: ${VOICE_MARKET_PLATFORM_SUBJECT:-}
+      VOICE_MARKET_SETTLEMENT_CHAIN_ID: ${VOICE_MARKET_SETTLEMENT_CHAIN_ID:-}
+      VOICE_MARKET_SETTLEMENT_ADDRESS: ${VOICE_MARKET_SETTLEMENT_ADDRESS:-}
+      VOICE_MARKET_CHAIN_RPC: ${VOICE_MARKET_CHAIN_RPC:-}
+      VOICE_MARKET_SETTLEMENT_HOLD_SECONDS: ${VOICE_MARKET_SETTLEMENT_HOLD_SECONDS:-604800}
+    volumes: ["voice-market-data:/data"]
+    read_only: true
+    tmpfs: ["/tmp:size=64m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 512m
+    cpus: 1
+    pids_limit: 128
+volumes:
+  voice-market-data:

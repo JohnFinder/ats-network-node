@@ -13,6 +13,8 @@ The node protects archive integrity and visibility, signing keys, operator disk 
 - Private metadata requires authentication. An owner-issued bearer download ticket grants temporary access to one file. Keep ticket URLs out of logs, public indexes and referrer metadata.
 - Peer transfers use configured and verified origins. Publisher-supplied URLs cannot turn the node into an HTTP proxy.
 
+Public and unlisted submissions require operator approval. Moderation relies on reviewers inspecting the actual content and distribution rights, including secure access to encrypted material when applicable. An approved state records an operator's decision. Its authenticity and freshness can be checked independently of the merits of that decision.
+
 ## Trust that remains
 
 Operators control the bytes they retain and the rankings they publish. A signature identifies the author of an availability statement. The local chain verifier also retrieves and hashes the bytes at verification time. Long-term storage, geographic location, independent replicas and consensus all require additional evidence.

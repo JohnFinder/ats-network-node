@@ -33,7 +33,7 @@ The engine image pins vLLM-Omni and vLLM to `0.30.0`, VoxCPM to `2.0.3` and the 
 
 The long-running engine uses continuous batching, batched CFM and AudioVAE, fused QKV and MLP, zero-time-step caching and a unified decode CUDA graph inside the model. Keep `enforce_eager: true` for compatibility with the pinned engine. The model's internal decode graph operates with that setting.
 
-The deployment uses the upstream synthesis quality settings. Tune for the GPU, sentence lengths, languages and reference audio your users send. Warm the target GPU and compare throughput, p95 latency and peak VRAM at concurrency levels of 1, 4 and 8 before raising capacity. [Benchmarking](#benchmark-the-target-gpu)
+The deployment retains the upstream 10-step synthesis and sample rate. Keep `enable_delayed_audio_copy` off so the pinned engine can batch AudioVAE decoding for book preparation. The app manages its own short playback window independently of node concurrency. Tune for the GPU, sentence lengths, languages and reference audio your users send. Warm the target GPU and compare throughput, p95 latency and peak VRAM at concurrency levels of 1, 4 and 8 before raising capacity. [Benchmarking](#benchmark-the-target-gpu)
 
 ## Deployment concurrency
 
@@ -98,9 +98,23 @@ Send an `application/json` body to `POST /v1/audio/speech`.
 
 Use `default` for the voice. The model accepts `voxcpm2` as an alias. Omit both reference fields to synthesize speech without cloning, or supply a recording with its transcript when available. The gateway validates `language` (`auto` or a language or locale code) for client compatibility and lets VoxCPM2 infer the language from the text. The ATS app handles sentence splitting, prefetch, buffering and playback speed.
 
-The gateway returns each complete result as `audio/wav` after synthesis. It sets `Cache-Control: no-store` and does not persist generated audio. Supply at most 4,096 Unicode code points in `input`. Reference recordings must contain PCM or floating-point WAV audio in a data URI, up to 45 seconds and 8 MiB. The gateway rejects URL and file references, other models and arbitrary inference options.
+The gateway returns each complete result as `audio/wav` by default. It sets `Cache-Control: no-store`. Supply at most 4,096 Unicode code points in `input`. Reference recordings must contain PCM or floating-point WAV audio in a data URI, up to 45 seconds and 8 MiB. The gateway rejects URL and file references, other models and arbitrary inference options.
 
 The default body limit is 12 MiB, the default response limit is 64 MiB and the default synthesis deadline is 180 seconds. Client disconnects cancel the gateway's upstream request. Timeouts, errors and disconnects release the admission slot. The gateway verifies credentials using constant-time comparison of fixed-length hashes. Use TLS for requests outside loopback.
+
+### Optional AAC responses
+
+Send `X-ATS-Audio-Format: aac-m4a-v1` to request about 48 kbps mono AAC in an M4A container. Keep `response_format: "wav"` in the JSON body so older gateways can still return WAV. The engine produces WAV and the gateway uses FFmpeg to convert it, returning `audio/mp4` on success. The gateway permits two single-threaded encodes at once and serves the original WAV if both slots are occupied, encoding fails or the output is no smaller than the source. Both formats carry a complete synthesis result.
+
+The gateway image includes FFmpeg. The GPU Compose file caps temporary storage in `/tmp` at 512 MiB. The encoder removes temporary files after completion, cancellation or failure. Rebuild and redeploy the gateway to use this extension on an existing node.
+
+### Optional reference audio registration
+
+When `GET /v1/models` includes the top-level field `"ats_reference_audio": "v1"`, send `POST /v1/audio/references` with the same Bearer key and a JSON body such as `{"audio":"data:audio/wav;base64,..."}`. The response contains an ID and `"expires_in": 1800`. Pass the ID as `ref_audio_id` in speech requests in place of `ref_audio`. Include the optional `ref_text` with each speech request.
+
+The gateway holds up to 64 references and 32 MiB of encoded audio in memory. It expires entries after 30 minutes of inactivity, removes expired entries on access and evicts the least recently used entry when it needs room. Registering the same recording again refreshes its existing random ID. A stale ID returns HTTP `428` with code `reference_required` before synthesis. The app registers the recording again and retries once.
+
+The app coalesces simultaneous uploads for the same reference and keys its stored IDs by endpoint, credential and audio digest. Registration reduces upload traffic from the app. The gateway still forwards the WAV to the engine on each speech request. Gateways without the advertised capability receive inline references.
 
 ## Benchmark the target GPU
 

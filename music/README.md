@@ -1,10 +1,12 @@
 # Music node service
 
-This page documents the optional music integration in the ATS workspace. The standalone node checkout contains this reference only. Run the examples in an ATS workspace that includes the music server and workers.
-
 The music service accepts text-to-music jobs and serves authenticated WAV downloads. Its model list, job queue and credentials are separate from the book node and TTS gateway. In ATS settings, select the ATS music adapter and enter the music service HTTPS base URL.
 
-From the workspace's `NetworkNode/` directory, start `node music/server.mjs` with Node.js 24 or newer. Supply separate client and worker credentials through the deployment secret store.
+## Deploy the music service
+
+Run the commands below from the root of the standalone `ats-network-node` checkout. The music service is a separate host process. It needs Node.js 24 or newer and uses built-in Node modules. Start at least one model worker, then start `node music/server.mjs` with the worker URL and credentials. Install the licensed weights separately for your chosen inference backend.
+
+Supply `NODE_MUSIC_API_KEYS` to the node process. Give each worker its own key and configure the corresponding key on the node. Keep client and worker keys separate. On a remote deployment, expose the node's loopback listener through a TLS reverse proxy on a dedicated HTTPS origin. Keep the workers on loopback. Point ATS to the HTTPS origin for the music service.
 
 | Variable | Default / meaning |
 |---|---|
@@ -17,7 +19,7 @@ From the workspace's `NetworkNode/` directory, start `node music/server.mjs` wit
 | `NODE_MUSIC_WORKER_URL` | `http://127.0.0.1:8792/generate`; fixed by operator, never by client |
 | `NODE_MUSIC_WORKER_API_KEY` | Separate worker credential, used by node and worker |
 
-On a host that also runs the speech or translation gateway, choose unused ports for music and update the corresponding worker URLs and client settings. The default music listener and Stable Audio worker ports overlap the default speech and translation gateway ports.
+The music defaults of 8791 and 8792 overlap the default speech and translation ports. The examples below use port 8794 for the music node, 8795 for the Stable Audio worker and 8793 for the MiniMax Music 3 adapter. Use the same ports in your worker URLs, proxy configuration and client settings. If you also deploy Voice Market on the host, give it a different port such as 8796. [Voice Market deployment](../voice-market/README.md)
 
 For Stable Audio, the worker receives `{model,prompt,duration_seconds,instrumental:true}` and returns a PCM WAV. Use loopback for HTTP workers. The node rejects redirects, keeps client credentials at the music service, and serves results from its own origin.
 
@@ -25,13 +27,29 @@ Stable Audio Open is the default. Set `NODE_MUSIC_MODEL` to select MiniMax Music
 
 ## Stable Audio Open worker
 
-The workspace's `stable_audio_worker.py` runs Stable Audio Open 1.0 through Diffusers. Set up CUDA with `torch`, `diffusers`, `transformers`, `accelerate`, `sentencepiece`, and `soundfile`. Accept the gated model terms and authorize downloads with the Hugging Face environment or cache, then run `python music/stable_audio_worker.py` from `NetworkNode/`. The worker requires CUDA and loads the weights separately.
+The bundled `music/stable_audio_worker.py` runs Stable Audio Open 1.0 through Diffusers. On a CUDA host, create and activate a Python virtual environment. Install a CUDA build of `torch` using the PyTorch installation selector. Accept the gated model terms and give the worker access to the weights through your Hugging Face credentials or cache. [PyTorch installation](https://pytorch.org/get-started/locally/) · [Stable Audio Open model card](https://huggingface.co/stabilityai/stable-audio-open-1.0)
+
+With `NODE_MUSIC_WORKER_API_KEY` set in the worker environment, install its remaining Python dependencies and start it on loopback.
+
+```sh
+python -m pip install diffusers transformers accelerate sentencepiece soundfile
+NODE_MUSIC_WORKER_PORT=8795 python music/stable_audio_worker.py
+```
+
+In the node process environment, set `NODE_MUSIC_API_KEYS` and the same Stable Audio worker key as `NODE_MUSIC_WORKER_API_KEY_STABLE_AUDIO`. Start the node with the worker's port.
+
+```sh
+export NODE_MUSIC_PORT=8794
+export NODE_MUSIC_MODEL=stabilityai/stable-audio-open-1.0
+export NODE_MUSIC_WORKER_URL_STABLE_AUDIO=http://127.0.0.1:8795/generate
+node music/server.mjs
+```
 
 Stable Audio Open supports up to 47 seconds of 44.1 kHz stereo and was trained with English prompts. Review its model terms separately from personal voice licenses. Measure generation speed and output quality on your GPU. [Stable Audio Open model card](https://huggingface.co/stabilityai/stable-audio-open-1.0).
 
 ## MiniMax Music 3 / SGLang-Omni worker
 
-The `mini_max_music3_worker.py` HTTP adapter uses the Python standard library. Use Python 3.12 or newer for support for extensible PCM WAV headers. Prepare SGLang-Omni and licensed MM3 weights separately. Start the inference process in the same network namespace as the adapter:
+The `mini_max_music3_worker.py` HTTP adapter uses the Python standard library. Use Python 3.12 or newer for support for extensible PCM WAV headers. Install SGLang-Omni and obtain the licensed MM3 weights separately. Start the inference process in the same network namespace as the adapter. [SGLang-Omni installation](https://sgl-project.github.io/sglang-omni/get_started/installation.html)
 
 ```sh
 CUDA_VISIBLE_DEVICES=0 sgl-omni serve --model-path /operator/weights/MiniMax-Music3 --host 127.0.0.1 --port 8002
@@ -67,24 +85,24 @@ Use separate secrets for the client and the worker. The node and adapter reject 
 
 Use positive integer timeout overrides up to 86,400 seconds. Set the node timeout above the adapter timeout to leave time to validate and save the WAV. A lower duration cap reduces the default timeouts. Increase them explicitly if the pipeline needs a longer cold start.
 
-Supply `NODE_MUSIC_API_KEYS` and `NODE_MUSIC_WORKER_API_KEY_MINIMAX_MUSIC3` through the secret store before running the example.
+Provide `NODE_MUSIC_WORKER_API_KEY_MINIMAX_MUSIC3` to the adapter and the node. Supply `NODE_MUSIC_API_KEYS` only to the node. The adapter defaults to the `input` field used by the upstream example. Set `NODE_MUSIC_MM3_LYRICS_FIELD=lyrics` only if your installed upstream uses that field.
 
 ```sh
 # Adapter process environment (the upstream is started separately).
 export NODE_MUSIC_MM3_UPSTREAM_URL=http://127.0.0.1:8002/v1/audio/speech
-export NODE_MUSIC_MM3_LYRICS_FIELD=lyrics  # For an upstream configured for the lyrics field.
 python3 music/mini_max_music3_worker.py
 ```
 
 ```sh
 # Node process: publish both models using separate loopback workers.
+export NODE_MUSIC_PORT=8794
 export NODE_MUSIC_MODEL=stabilityai/stable-audio-open-1.0
-export NODE_MUSIC_WORKER_URL_STABLE_AUDIO=http://127.0.0.1:8792/generate
+export NODE_MUSIC_WORKER_URL_STABLE_AUDIO=http://127.0.0.1:8795/generate
 export NODE_MUSIC_WORKER_URL_MINIMAX_MUSIC3=http://127.0.0.1:8793/generate
 node music/server.mjs
 ```
 
-Run both commands from `NetworkNode/`. Start a dedicated Stable Audio worker with its matching secret. For an MM3-only node, select `NODE_MUSIC_MODEL=MiniMaxAI/MiniMax-Music3` and omit the Stable Audio URL.
+Use the node command above in place of the Stable Audio-only node command. For both models, start the Stable Audio worker on port 8795 and supply its matching key to the node. For MM3 alone, set `NODE_MUSIC_MODEL=MiniMaxAI/MiniMax-Music3` and omit the Stable Audio URL.
 
 ### API and output
 
@@ -102,17 +120,18 @@ The MM3 model entry includes `sample_rate:32000`, `channels:2`, `stereo:true`, `
 }
 ```
 
-Save this as a local JSON request and send it with the **client** credential and matching idempotency header:
+Save this as `mm3-request.json` and set `MUSIC_CLIENT_KEY` to one of the credentials in `NODE_MUSIC_API_KEYS`. Use that client credential and a matching idempotency header.
 
 ```sh
-curl http://127.0.0.1:8791/v1/models -H "Authorization: Bearer ${MUSIC_CLIENT_KEY}"
-curl http://127.0.0.1:8791/v1/music/jobs \
+export MUSIC_BASE_URL=http://127.0.0.1:8794
+curl "${MUSIC_BASE_URL}/v1/models" -H "Authorization: Bearer ${MUSIC_CLIENT_KEY}"
+curl "${MUSIC_BASE_URL}/v1/music/jobs" \
   -H "Authorization: Bearer ${MUSIC_CLIENT_KEY}" \
   -H 'Content-Type: application/json' -H 'Idempotency-Key: mm3-song-0001' \
   --data-binary @mm3-request.json
 # Use the returned id; poll status, then download only once completed.
-curl "http://127.0.0.1:8791/v1/music/jobs/${JOB_ID}" -H "Authorization: Bearer ${MUSIC_CLIENT_KEY}"
-curl "http://127.0.0.1:8791/v1/music/jobs/${JOB_ID}/audio" \
+curl "${MUSIC_BASE_URL}/v1/music/jobs/${JOB_ID}" -H "Authorization: Bearer ${MUSIC_CLIENT_KEY}"
+curl "${MUSIC_BASE_URL}/v1/music/jobs/${JOB_ID}/audio" \
   -H "Authorization: Bearer ${MUSIC_CLIENT_KEY}" --output song.wav
 ```
 

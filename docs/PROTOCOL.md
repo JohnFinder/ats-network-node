@@ -15,7 +15,8 @@ This reference describes storage, publisher authentication, peer discovery and f
 | `NODE_MAX_ENTRIES` | `50000` | Total pending and completed publication records |
 | `NODE_MAX_OWNER_ENTRIES` | `1000` | Pending and completed publication records per key |
 | `NODE_UPLOAD_TTL_HOURS` | `168` | Lifetime of an incomplete upload, measured from creation |
-| `NODE_ADMIN_PUBLIC_KEYS` | empty | Comma-separated publisher **IDs**, each SHA-256 of raw public key, allowed to delete any publication |
+| `NODE_ADMIN_PUBLIC_KEYS` | empty | Comma-separated reviewer IDs, each SHA-256 of a raw Ed25519 public key |
+| `NODE_MODERATION_CONTACT_URL` | empty | Monitored HTTPS operator contact. Required with a reviewer ID to enable public and unlisted publication |
 | `NODE_PROVIDER_ADDRESS` | empty | Optional `0x` Ethereum address in evidence. Verify wallet control separately |
 
 Each publisher can have up to 32 pending uploads. The node processes at most four part PUT requests simultaneously and allows up to 1,200 requests per minute per immediate TCP peer. Behind a reverse proxy, that peer can be the proxy itself. Apply public-facing rate limits at the edge. The node ignores arbitrary forwarded IP headers.
@@ -55,12 +56,14 @@ The audience must match the configured public origin, including the scheme, host
 | `POST /v1/uploads` | Reserve capacity and initialize upload |
 | `GET /v1/uploads/:id` | Owner retrieves uploaded parts |
 | `PUT /v1/uploads/:id/parts/:index` | Owner uploads exact raw part bytes |
-| `POST /v1/uploads/:id/complete` | Assemble and validate the owner’s upload. Public resources become searchable on completion |
+| `POST /v1/uploads/:id/complete` | Assemble and validate the owner’s upload. Public and unlisted resources enter review with `moderationStatus` set to `pending` |
 | `DELETE /v1/uploads/:id` | Owner cancels incomplete upload |
 | `GET /v1/resources?q=&sort=recent&cursor=&limit=30` | Public catalog sorted by `recent`, `downloads` or `trending` |
 | `GET /v1/resources/:id` | Resource metadata subject to visibility and caller access |
 | `GET /v1/resources/:id/download` | Download with optional single HTTP byte range |
 | `DELETE /v1/resources/:id` | Owner or configured moderator removes publication |
+| `GET /v1/resources/:id/moderation` | Checks current public approval. Pass `originProviderID` as a query parameter for a federated listing |
+| `POST /v1/resources/:id/reports` | Signed report with `reason`, optional `details` and optional federated `originProviderID` |
 | `POST /v1/resources/:id/downloads` | Create a 24-hour download ticket bound to the requesting identity |
 | `POST /v1/downloads/:ticket/complete` | Report verified full download |
 | `GET /v1/resources/:id/evidence` | Signed, time-stamped node storage self-attestation |
@@ -94,13 +97,15 @@ Send JSON to `POST /v1/uploads`:
 
 Set `visibility` to `public`, `unlisted` or `private`.
 
-Public records enter search as soon as the upload completes. An unlisted record is accessible by ID and stays out of catalog queries.
+Public and unlisted resources enter moderation after upload. Until approval, only the owner and an administrator can access them. Only approved public resources enter the search catalog. Use a signed resource metadata request to read the review state.
+
+A signed report accepts `objectionable`, `harassment`, `copyright`, `spam` or `other`. Include optional details of up to 2,000 characters. The response contains the report `id`. A retry by the same signer for the same resource returns the existing ID while that report remains open. For a federated resource, include its `originProviderID`. A configured node advertises `moderation: {schemaVersion: 1, contactURL}` in `/v1/node`. See the [operator review and reporting procedure](OPERATIONS.md#content-moderation).
 
 For private resources, sign as the owner or use an owner-issued download ticket. A ticket grants temporary access to the named object to anyone who holds its URL. Keep ticket URLs private. Deletion applies to the local node and cannot recall downloaded copies or externally indexed metadata.
 
 Upload initialization and status return `id`, `partSize`, `byteCount`, `sha256`, `expiresAt` and `parts`. Each part includes `index`, `sha256` and `byteCount`. Compare the fixed local payload hash and every reported part hash before skipping previously uploaded parts. Indices start at zero. Only the final part can be shorter than `partSize`. Replaying identical part bytes is safe, but a new hash at an occupied index is rejected. Retrying completion returns the same resource. Unfinished uploads expire at the configured lifetime.
 
-Completed resources include `id`, `title`, `summary`, nullable `language`, `tags`, `sha256`, `byteCount`, `sources`, `encrypted`, `publisherID`, ISO 8601 `createdAt`, `downloads` and `visibility`. Catalog responses include `items` and `nextCursor`, which is null on the final page. The cursor represents an offset into the current ranking. Deduplicate IDs because concurrent publishing and downloads can reorder results. Search uses bounded SQLite substring matching with case folding for ASCII.
+Completed resources include `id`, `title`, `summary`, nullable `language`, `tags`, `sha256`, `byteCount`, `sources`, `encrypted`, `publisherID`, ISO 8601 `createdAt`, `downloads` and `visibility`. Public and unlisted resources also include `moderationStatus`. Catalog responses include `items` and `nextCursor`, which is null on the final page. The cursor represents an offset into the current ranking. Deduplicate IDs because concurrent publishing and downloads can reorder results. Search uses bounded SQLite substring matching with case folding for ASCII.
 
 The node checks the archive magic and outer hash. ATS validates the full manifest, signature, decryption and media. Encrypted packages are stored without content keys. A public package still exposes its title, summary, tags and size.
 
@@ -132,7 +137,7 @@ The selected catalog node signs its observations. Origin descriptors independent
 
 Use `NODE_ALLOW_PRIVATE_PEERS=1` only for explicit development origins, including allowed HTTP origins. Production peers use HTTPS. The node resolves each request destination and pins the connection to the checked address. It rejects redirects and public peers that resolve to private addresses.
 
-The mesh supports up to 32 pinned peers, 1,000 remote descriptors, 100 entries per snapshot page and 1,000 descriptors per peer reconciliation. A local snapshot exports up to 1,000 descriptors. Shard catalogs when those limits are insufficient. Placement is deterministic across the current node and reachable allowed peers. Stale public metadata and replicas expire after a seven-day grace period. Forwarded records retain their original signatures. An observed origin tombstone blocks reintroduction of that version for up to 30 days, subject to `NODE_MAX_ENTRIES`.
+The mesh supports up to 32 pinned peers, 1,000 remote descriptors, 100 entries per snapshot page and 1,000 descriptors per peer reconciliation. A local snapshot exports up to 1,000 descriptors. Shard catalogs when those limits are insufficient. Placement is deterministic across the current node and reachable allowed peers. Only the pinned origin can refresh a resource's signed approval. Entries and replica routes become unavailable after `NODE_PEER_STALE_SECONDS` without renewal. The node cleans up stale replicas after seven days. An observed origin tombstone blocks reintroduction of that version for up to 30 days, subject to `NODE_MAX_ENTRIES`.
 
 Replica downloads persist a reservation and a `.partial` file. On restart, the node resumes with Range and exact ETag and Content-Range checks. It promotes a copy after verifying the complete length, SHA-256 and archive magic. Available replicas can serve as fallbacks when the origin is offline, and reconciliation repairs eligible copies within quota. A draining node serves existing copies while declining uploads, new retention orders and automatic placements. Verified custody describes a copy served by a pinned node. Independent hardware or operators require separate verification.
 

@@ -7,6 +7,9 @@ export class Catalog {
     this.pendingChecks = new Map();
     db.exec(`CREATE TABLE IF NOT EXISTS metadata(hash TEXT PRIMARY KEY,bytes TEXT NOT NULL,created INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS catalog_checks(hash TEXT NOT NULL,node TEXT NOT NULL,checked INTEGER NOT NULL,valid INTEGER NOT NULL,PRIMARY KEY(hash,node));`);
+    if (!db.prepare('PRAGMA table_info(catalog_checks)').all().some(column => column.name === 'moderated')) {
+      db.exec('ALTER TABLE catalog_checks ADD COLUMN moderated INTEGER NOT NULL DEFAULT 0');
+    }
   }
   async source(nodeURL, resourceID) {
     const node = this.nodes.find(node => node.url === nodeURL);
@@ -19,7 +22,7 @@ export class Catalog {
       for (const envelope of snapshot.items) {
         const descriptor = verifyEnvelope(envelope, new Set([node.providerID])).payload;
         if (descriptor.resource?.id !== resourceID) continue;
-        if (descriptor.type !== 'ats-publication-v1' || descriptor.originURL !== node.url || descriptor.originProviderID !== node.providerID) throw new Error('invalid_source_descriptor');
+        if (descriptor.type !== 'ats-publication-v1' || descriptor.originURL !== node.url || descriptor.originProviderID !== node.providerID || descriptor.resource.moderationStatus !== 'approved') throw new Error('invalid_source_descriptor');
         const proof = descriptor.publisherProof, key = rawKey(proof.publicKey), body = Buffer.from(proof.bodyBytes, 'base64');
         if (body.length > 16384 || proof.audience !== node.url || proof.path !== '/v1/uploads' || proof.method !== 'POST') throw new Error('invalid_publisher_proof');
         const message = `ATS-NODE-V1\n${proof.audience}\nPOST\n/v1/uploads\n${proof.timestamp}\n${proof.nonce}\n${sha(body)}`;
@@ -51,11 +54,27 @@ export class Catalog {
     this.db.prepare('INSERT OR IGNORE INTO metadata VALUES(?,?,?)').run(hash, bytes.toString('base64'), now());
     return { hash: `0x${hash}`, bytes };
   }
+  async checkModeration(node, resourceID) {
+    if (!/^[0-9a-f-]{36}$/i.test(resourceID)) throw new Error('unapproved_resource_source');
+    const { bytes } = await boundedFetch(`${node.url}/v1/resources/${resourceID}/moderation`, 1024);
+    if (JSON.parse(bytes).moderationStatus !== 'approved') throw new Error('resource_not_approved');
+  }
+  async publicMetadata(hash, bytes) {
+    const metadata = JSON.parse(Buffer.from(bytes, 'base64'));
+    const checks = this.db.prepare('SELECT node FROM catalog_checks WHERE hash=? AND valid=1 AND moderated=1').all(hash);
+    for (const source of metadata.sources) {
+      const node = this.nodes.find(n => n.url === source.nodeURL && n.providerID === source.providerID);
+      if (!node || !checks.some(c => c.node === node.providerID)) continue;
+      try { await this.checkModeration(node, source.resourceID); return true; }
+      catch { /* Continue to the next pinned and audited source. */ }
+    }
+    return false;
+  }
   async check(metadata) {
     const hash = sha(Buffer.from(JSON.stringify(metadata)));
     const existing = this.pendingChecks.get(hash);
     if (existing) return existing;
-    const fresh = this.db.prepare('SELECT node FROM catalog_checks WHERE hash=? AND valid=1 AND checked>?').get(hash, now() - this.config.catalogCheckSeconds / 2);
+    const fresh = this.db.prepare('SELECT node FROM catalog_checks WHERE hash=? AND valid=1 AND moderated=1 AND checked>?').get(hash, now() - this.config.catalogCheckSeconds / 2);
     if (fresh) {
       const node = this.nodes.find(n => n.providerID === fresh.node && metadata.sources.some(s => s.providerID === n.providerID && s.nodeURL === n.url));
       if (node) return node;
@@ -65,8 +84,9 @@ export class Catalog {
       for (const source of metadata.sources) {
         const node = this.nodes.find(n => n.url === source.nodeURL && n.providerID === source.providerID);
         if (!node) continue;
+        await this.checkModeration(node, source.resourceID);
         await hashDownload(`${node.url}/v1/resources/${source.resourceID}/download`, metadata.byteCount, metadata.sha256);
-        this.db.prepare('INSERT OR REPLACE INTO catalog_checks VALUES(?,?,?,1)').run(hash, node.providerID, now());
+        this.db.prepare('INSERT OR REPLACE INTO catalog_checks(hash,node,checked,valid,moderated) VALUES(?,?,?,1,1)').run(hash, node.providerID, now());
         return node;
       }
       throw new Error('no_approved_source');
@@ -86,9 +106,11 @@ export class Catalog {
       if (metadata.publisherID !== args.fingerprint?.slice(2) || metadata.sha256 !== args.archiveHash.slice(2)) continue;
       // Rebuild from canonical event log every query; rollback cannot leave materialized phantom publications.
       if (query && ![metadata.title, metadata.summary, metadata.language, ...metadata.tags].join(' ').toLocaleLowerCase().includes(query.toLocaleLowerCase())) continue;
-      const checks = this.db.prepare('SELECT node,checked FROM catalog_checks WHERE hash=? AND valid=1 AND checked>?').all(args.metadataHash.slice(2), now() - this.config.catalogCheckSeconds);
+      const checks = this.db.prepare('SELECT node,checked FROM catalog_checks WHERE hash=? AND valid=1 AND moderated=1 AND checked>?').all(args.metadataHash.slice(2), now() - this.config.catalogCheckSeconds);
       if (!checks.length) continue;
-      items.push({ id: metadata.publicationID, ...metadata, visibility: 'public', sources: metadata.sources.filter(s => checks.some(c => c.node === s.providerID)).map(s => `${s.nodeURL}/v1/resources/${s.resourceID}/download`), createdAt: new Date(this.db.prepare('SELECT value FROM service_state WHERE key=?').get(`blocktime:${event.height}`)?.value * 1000 || 0).toISOString(), chainPublicationID: args.publicationId, publisherWallet: args.publisher, confirmedBlock: event.height, confirmedBlockHash: event.blockHash, metadataHash: args.metadataHash, downloads: null, rankingSource: 'chain-confirmed-newest', sourceChecks: checks });
+      const sources = metadata.sources.filter(s => checks.some(c => c.node === s.providerID) && this.nodes.some(n => n.url === s.nodeURL && n.providerID === s.providerID));
+      if (!sources.length) continue;
+      items.push({ id: metadata.publicationID, ...metadata, visibility: 'public', moderationStatus: 'approved', originProviderID: sources[0].providerID, originURL: sources[0].nodeURL, sources: sources.map(s => `${s.nodeURL}/v1/resources/${s.resourceID}/download`), createdAt: new Date(this.db.prepare('SELECT value FROM service_state WHERE key=?').get(`blocktime:${event.height}`)?.value * 1000 || 0).toISOString(), chainPublicationID: args.publicationId, publisherWallet: args.publisher, confirmedBlock: event.height, confirmedBlockHash: event.blockHash, metadataHash: args.metadataHash, downloads: null, rankingSource: 'chain-confirmed-newest', sourceChecks: checks });
     }
     return { schemaVersion: 1, type: 'ats-chain-catalog-v1', chainId: this.chain.manifest.chainId, generatedAt: now(), indexedHeight: this.chain.status.indexedHeight, items: items.slice(cursor, cursor + limit), nextCursor: items.length > cursor + limit ? cursor + limit : null };
   }
@@ -116,7 +138,7 @@ export class Catalog {
         }
       }
       if (!row) continue;
-      const checked = this.db.prepare('SELECT MAX(checked) AS last FROM catalog_checks WHERE hash=? AND valid=1').get(hash).last ?? 0;
+      const checked = this.db.prepare('SELECT MAX(checked) AS last FROM catalog_checks WHERE hash=? AND valid=1 AND moderated=1').get(hash).last ?? 0;
       if (now() - checked < this.config.catalogCheckSeconds / 2) continue;
       try { await this.check(JSON.parse(Buffer.from(row.bytes, 'base64'))); }
       catch { this.db.prepare('DELETE FROM catalog_checks WHERE hash=?').run(hash); }

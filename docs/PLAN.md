@@ -19,7 +19,7 @@ The stages below describe capabilities and operational acceptance criteria. A fu
 
 1. Export a complete signed `.atsbook` in ATS. Choose public, unlisted or private visibility and whether to encrypt the content.
 2. Publish a fixed snapshot to a configured node. ATS stores the archive hash, node, upload ID and completed parts. On resume it reconciles that state against the server and retransmits missing parts.
-3. The node verifies the completed bytes. Public publications become searchable after successful completion. At download, ATS verifies the archive hash and size before inspecting publisher proof, decrypting and importing.
+3. The node verifies the completed bytes. Public and unlisted submissions enter moderation. Public publications become searchable after reviewer approval. At download, ATS verifies the archive hash and size before inspecting publisher proof, decrypting and importing.
 
 The deployment owner can configure a default HTTPS URL when building the app. If a default is unavailable, the app exposes node setup. Users choose a node rather than managing buckets or object-storage credentials. Search and ranking reflect the selected node's observations.
 

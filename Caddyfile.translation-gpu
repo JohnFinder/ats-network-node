@@ -1,0 +1,31 @@
+{$NODE_DOMAIN} {
+    handle_path /translation/* {
+        request_body {
+            max_size 256KB
+        }
+        reverse_proxy translation:8792 {
+            transport http {
+                response_header_timeout 130s
+            }
+        }
+    }
+    @speech path /v1/audio/speech /v1/audio/references /v1/models
+    handle @speech {
+        request_body {
+            max_size 12MB
+        }
+        reverse_proxy tts:8791 {
+            transport http {
+                response_header_timeout 190s
+            }
+        }
+    }
+    @operatorServices path /v2/* /wallet /wallet/*
+    handle @operatorServices {
+        reverse_proxy services:8790
+    }
+    handle {
+        reverse_proxy node:8787
+    }
+    header X-Content-Type-Options nosniff
+}

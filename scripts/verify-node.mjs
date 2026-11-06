@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Synthetic transfer fixtures only. No user documents, real tokens or live node required.
 import assert from 'node:assert/strict';
-import { createHash, generateKeyPairSync, sign, verify, randomBytes, randomUUID, createPublicKey } from 'node:crypto';
+import { createHash, generateKeyPairSync, sign, verify, randomBytes, randomUUID, createPrivateKey, createPublicKey } from 'node:crypto';
 import { readFile, writeFile, chmod } from 'node:fs/promises';
 
 const origin = process.env.NODE_URL || 'http://127.0.0.1:18787';
@@ -9,6 +9,11 @@ const endpoint = new URL(origin);
 if (!['127.0.0.1', 'localhost', '[::1]'].includes(endpoint.hostname) && process.env.ALLOW_REMOTE_VERIFY !== '1') throw Error('Only local verification allowed by default');
 const statePath = process.env.VERIFY_STATE || '/tmp/ats-network-verification-state.json';
 const phase = process.argv[2] || 'full';
+const moderatorPath = process.env.ATS_MODERATION_PRIVATE_KEY_FILE;
+if (!moderatorPath) throw Error('Set ATS_MODERATION_PRIVATE_KEY_FILE to the configured fixture moderator’s Ed25519 PEM file.');
+const moderatorKey = createPrivateKey(await readFile(moderatorPath));
+const moderator = { private: moderatorKey.export({ format: 'der', type: 'pkcs8' }).toString('base64'),
+  public: createPublicKey(moderatorKey).export({ format: 'der', type: 'spki' }).subarray(-32).toString('base64') };
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 const keys = () => {
   const key = generateKeyPairSync('ed25519');
@@ -44,6 +49,13 @@ async function upload(identity, session, bytes) {
   }
   return request(identity, 'POST', `/v1/uploads/${session.id}/complete`, {});
 }
+async function approve(id, archive) {
+  const route = `/v1/resources/${id}/download`;
+  const response = await fetch(origin + route, { headers: headers(moderator, 'GET', route, Buffer.alloc(0)) });
+  assert.equal(response.status, 200);
+  assert.equal(sha(Buffer.from(await response.arrayBuffer())), sha(archive));
+  await request(moderator, 'POST', `/v1/moderation/resources/${id}`, { status: 'approved', inspectedContent: true, details: 'Verified exact synthetic transfer fixture bytes.' });
+}
 
 if (phase === 'prepare' || phase === 'full') {
   const identity = keys(), outsider = keys(), bytes = fixture(8 * 1024 * 1024 + 131072);
@@ -77,8 +89,10 @@ if (phase === 'resume' || phase === 'full') {
   assert.equal(resource.sha256, sha(bytes)); assert.equal(resource.visibility, 'public');
   const again = await request(identity, 'POST', `/v1/uploads/${session.id}/complete`, {});
   assert.equal(again.id, resource.id); pass('completion is idempotent');
+  assert.equal(resource.moderationStatus, 'pending');
+  await approve(resource.id, bytes);
   const page = await request(null, 'GET', '/v1/resources?q=Resumable&sort=recent&limit=1');
-  assert(page.items.some(v => v.id === resource.id)); pass('completed public archive automatically searchable');
+  assert(page.items.some(v => v.id === resource.id)); pass('approved public archive searchable');
   const response = await fetch(origin + `/v1/resources/${resource.id}/download`, { headers: { Range: 'bytes=0-7' } });
   assert.equal(response.status, 206); assert.equal(await response.text(), 'ATSBOOK1'); pass('HTTP range retrieval');
   const ticket = await request(outsider, 'POST', `/v1/resources/${resource.id}/downloads`, {}, 201);
@@ -109,6 +123,7 @@ if (phase === 'resume' || phase === 'full') {
       const t = await request(identity, 'POST', `/v1/resources/${hidden.id}/downloads`, {}, 201);
       const r = await fetch(t.downloadURL); assert.equal(r.status, 200); assert.equal(sha(Buffer.from(await r.arrayBuffer())), hidden.sha256);
     } else {
+      await approve(hidden.id, secretBytes);
       const r = await fetch(origin + `/v1/resources/${hidden.id}/download`); assert.equal(r.status, 200);
     }
   }

@@ -4,6 +4,9 @@ import http from 'node:http';
 import { readFileSync } from 'node:fs';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { once } from 'node:events';
+import { compressedAudio, compressionAvailable } from './audio-encoding.mjs';
+import { ReferenceCache } from './reference-cache.mjs';
+const references = new ReferenceCache();
 
 const model = 'openbmb/VoxCPM2';
 const bounded = (name, fallback, minimum, maximum) => {
@@ -83,7 +86,7 @@ function validateReference(value) {
 
 function payload(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) fail(400, 'invalid_request');
-  const allowed = new Set(['model', 'input', 'voice', 'response_format', 'ref_audio', 'ref_text', 'stream', 'speed', 'language']);
+  const allowed = new Set(['model', 'input', 'voice', 'response_format', 'ref_audio', 'ref_audio_id', 'ref_text', 'stream', 'speed', 'language']);
   if (Object.keys(value).some(key => !allowed.has(key))) fail(400, 'unsupported_parameter');
   if (![model, 'voxcpm2'].includes(value.model)) fail(400, 'unsupported_model');
   if (typeof value.input !== 'string' || value.input.length > 8192 || !value.input.trim() || [...value.input].length > 4096) fail(400, 'invalid_input_length');
@@ -97,6 +100,11 @@ function payload(value) {
   if (value.language !== undefined && (typeof value.language !== 'string' || !/^(?:auto|[a-z]{2,3}(?:[-_][A-Za-z0-9]{2,8}){0,2})$/.test(value.language))) fail(400, 'invalid_language');
   const output = { model, input: value.input, voice: 'default', response_format: 'wav', stream: false };
   if (value.ref_audio !== undefined) output.ref_audio = validateReference(value.ref_audio);
+  if (value.ref_audio_id !== undefined) {
+    if (value.ref_audio !== undefined || typeof value.ref_audio_id !== 'string' || !/^[a-f0-9-]{36}$/.test(value.ref_audio_id)) fail(400, 'invalid_reference_id');
+    output.ref_audio = references.get(value.ref_audio_id);
+    if (!output.ref_audio) fail(428, 'reference_required');
+  }
   if (value.ref_text !== undefined) {
     if (!output.ref_audio || typeof value.ref_text !== 'string' || value.ref_text.length > 8192 || [...value.ref_text].length > 4096) fail(400, 'invalid_reference_text');
     if (value.ref_text.trim()) output.ref_text = value.ref_text;
@@ -142,25 +150,35 @@ async function ready(signal) {
 
 async function route(req, res) {
   if (req.url === '/health' && req.method === 'GET') return json(res, 200, { status: 'ok' });
-  if (!['/v1/models', '/v1/audio/speech'].includes(req.url)) fail(404, 'not_found');
+  if (!['/v1/models', '/v1/audio/speech', '/v1/audio/references'].includes(req.url)) fail(404, 'not_found');
   authenticate(req);
   if (req.url === '/v1/models' && req.method === 'GET') {
     if (!await ready(AbortSignal.timeout(3000))) fail(503, 'engine_unavailable');
-    return json(res, 200, { object: 'list', data: [{ id: model, object: 'model', owned_by: 'openbmb', capabilities: ['speech', 'voice-cloning'], sample_rate: 48000 }] });
+    return json(res, 200, { object: 'list', ats_reference_audio: 'v1', data: [{ id: model, object: 'model', owned_by: 'openbmb', capabilities: ['speech', 'voice-cloning'], sample_rate: 48000 }] });
   }
-  if (req.url !== '/v1/audio/speech' || req.method !== 'POST') fail(405, 'method_not_allowed');
+  if (req.method !== 'POST' || req.url === '/v1/models') fail(405, 'method_not_allowed');
   // Admission happens before reading audio, bounding concurrent body memory as well as GPU work.
   if (active >= maxConcurrent) fail(429, 'tts_busy');
   active++;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(new Error('deadline')), timeout);
-  const abort = () => { if (!res.writableEnded) controller.abort(new Error('client_disconnected')); };
+  const abort = () => { if (!res.writableFinished) controller.abort(new Error('client_disconnected')); };
   req.on('aborted', abort); res.on('close', abort);
   try {
-    const value = payload(await requestBody(req));
+    const body = await requestBody(req);
+    controller.signal.throwIfAborted();
+    if (req.url === '/v1/audio/references') {
+      if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some(key => key !== 'audio')) fail(400, 'invalid_request');
+      return json(res, 200, { id: references.register(validateReference(body.audio)), expires_in: 1800 });
+    }
+    const value = payload(body);
     const response = await fetch(new URL('/v1/audio/speech', upstream), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value), signal: controller.signal, redirect: 'error' });
     if (!response.ok) { await response.body?.cancel(); fail(response.status === 429 || response.status === 503 ? 503 : 502, 'engine_unavailable'); }
-    await forwardAudio(response, res, controller.signal);
+    if (req.headers['x-ats-audio-format'] === 'aac-m4a-v1' && compressionAvailable()) {
+      await compressedAudio(response, res, controller.signal, maxResponse);
+    } else {
+      await forwardAudio(response, res, controller.signal);
+    }
   } catch (error) {
     if (controller.signal.aborted) fail(504, 'tts_deadline_exceeded');
     throw error;

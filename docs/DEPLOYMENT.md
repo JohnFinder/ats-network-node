@@ -7,7 +7,9 @@ Run the deployment commands from the root of the standalone `ats-network-node` r
 | Input | What it controls |
 | --- | --- |
 | `.env` | Public origins, quotas, peer pins, concurrency and resource limits |
-| `secrets/tts_api_key` | Existing private speech gateway credential |
+| `secrets/tts_api_key` and `secrets/translation_api_key` | Existing gateway credentials |
+| Voice Market data volume | Market database and persistent `issuer.der` |
+| Music data directory | Private job database and generated audio |
 | `tts/voxcpm2.yaml` | Engine context, KV cache budget, device and runtime settings |
 | Compose project name and overlay list | Selection of containers, networks and persistent volumes |
 | Data volumes | Storage identity, SQLite state, publications and optional service identities |
@@ -22,6 +24,8 @@ Keep deployment credentials outside Git. When updating an existing node, merge n
 3. For GPU deployments, choose `TTS_MAX_CONCURRENT` between 1 and 128. The default is 8. A nonempty override changes gateway admission, engine sequence capacity and decode graph batch capacity together. Set a separate graph override to reduce only graph capacity. See [deployment concurrency](../tts/README.md#deployment-concurrency).
 4. Rebuild and recreate the affected containers with the same Compose project name and complete overlay list. Use `sh scripts/start-gpu-node.sh` for the standard GPU stack, with `--public` for a public deployment. For a customized stack, retain the original Compose invocation and custom overlays. When switching checkout directories, set the existing project name explicitly so Compose selects the original volumes.
 5. Check container health and logs. Gateway logs show `max_concurrent`. Engine logs show `max_num_seqs` and `decode_graph_max_batch_size`. Storage `/health` checks the storage process. Use the authenticated `/v1/models` route to check engine readiness, then send a synthetic speech request if synthesis acceptance was requested.
+
+Existing public and unlisted book listings and existing voice packages enter moderation on upgrade. Configure reviewer fingerprints and the monitored HTTPS contact before rolling out the change, and plan time for reviewers to approve existing content. Private book transfers retain their existing access controls. [Moderation and reporting](OPERATIONS.md#content-moderation)
 
 Recreating the engine interrupts requests in progress. Coordinate the maintenance window with clients and preserve the API key their configurations already use.
 

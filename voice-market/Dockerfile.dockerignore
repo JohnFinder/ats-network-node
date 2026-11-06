@@ -1,0 +1,9 @@
+*
+!src
+!src/moderation.mjs
+!voice-market
+!voice-market/package.json
+!voice-market/package-lock.json
+!voice-market/src
+!voice-market/src/**
+!voice-market/Dockerfile

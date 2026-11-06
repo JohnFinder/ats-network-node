@@ -15,7 +15,9 @@ for(const [i,n]of ['A','B','C'].entries())env[`MESH_${n}_PORT`]=String(ports[i])
 const host=i=>`http://127.0.0.1:${ports[i]}`,origin=i=>`http://node-${'abc'[i]}:8787`;
 const sha=b=>createHash('sha256').update(b).digest('hex');
 const key=generateKeyPairSync('ed25519'),raw=key.publicKey.export({format:'der',type:'spki'}).subarray(-32),owner=sha(raw);
-env.MESH_ADMIN_ID=owner;
+const moderator=generateKeyPairSync('ed25519'),moderatorRaw=moderator.publicKey.export({format:'der',type:'spki'}).subarray(-32);
+env.MESH_ADMIN_ID=sha(moderatorRaw);
+env.NODE_MODERATION_CONTACT_URL='https://moderation.example.invalid/';
 let checks=0,failed=false;
 async function log(s){console.log(s);await appendFile(report,s+'\n');}
 async function pass(s){checks++;await log(`PASS ${s}`);}
@@ -24,8 +26,8 @@ async function compose(...args){return await new Promise((resolve,reject)=>{
   for(const stream of [p.stdout,p.stderr])stream.on('data',b=>{output+=b.toString();process.stdout.write(b);});
   p.on('error',reject);p.on('exit',code=>{appendFile(report,output).then(()=>code===0?resolve(output):reject(Error(`compose ${args[0]} failed ${code}`)));});
 });}
-function headers(i,method,route,b){const timestamp=String(Math.floor(Date.now()/1000)),nonce=randomUUID();return {'Content-Type':'application/json','X-ATS-Audience':origin(i),'X-ATS-Public-Key':raw.toString('base64'),'X-ATS-Timestamp':timestamp,'X-ATS-Nonce':nonce,'X-ATS-Signature':sign(null,Buffer.from(`ATS-NODE-V1\n${origin(i)}\n${method}\n${route}\n${timestamp}\n${nonce}\n${sha(b)}`),key.privateKey).toString('base64')};}
-async function req(i,method,route,value,expected=200,auth=true){const b=value===undefined?Buffer.alloc(0):Buffer.isBuffer(value)?value:Buffer.from(JSON.stringify(value));const r=await fetch(host(i)+route,{method,headers:auth?headers(i,method,route,b):{},body:method==='GET'?undefined:b,signal:AbortSignal.timeout(15000)});const result=await r.json();assert.equal(r.status,expected,`${method} ${i} ${route}: ${JSON.stringify(result)}`);return result;}
+function headers(i,method,route,b,review=false){const timestamp=String(Math.floor(Date.now()/1000)),nonce=randomUUID();return {'Content-Type':'application/json','X-ATS-Audience':origin(i),'X-ATS-Public-Key':(review?moderatorRaw:raw).toString('base64'),'X-ATS-Timestamp':timestamp,'X-ATS-Nonce':nonce,'X-ATS-Signature':sign(null,Buffer.from(`ATS-NODE-V1\n${origin(i)}\n${method}\n${route}\n${timestamp}\n${nonce}\n${sha(b)}`),(review?moderator:key).privateKey).toString('base64')};}
+async function req(i,method,route,value,expected=200,auth=true,review=false){const b=value===undefined?Buffer.alloc(0):Buffer.isBuffer(value)?value:Buffer.from(JSON.stringify(value));const r=await fetch(host(i)+route,{method,headers:auth?headers(i,method,route,b,review):{},body:method==='GET'?undefined:b,signal:AbortSignal.timeout(15000)});const result=await r.json();assert.equal(r.status,expected,`${method} ${i} ${route}: ${JSON.stringify(result)}`);return result;}
 const get=(i,route)=>req(i,'GET',route,undefined,200,false);
 function decode(e,id){const b=Buffer.from(e.payloadBytes,'base64'),k=Buffer.from(e.publicKey,'base64');assert.equal(sha(k),id);assert(verify(null,b,createPublicKey({key:Buffer.concat([Buffer.from('302a300506032b6570032100','hex'),k]),format:'der',type:'spki'}),Buffer.from(e.signature,'base64')));return JSON.parse(b);}
 async function waitFor(name,f,timeout=60000){const until=Date.now()+timeout;while(Date.now()<until){try{const v=await f();if(v)return v;}catch{}await new Promise(r=>setTimeout(r,500));}throw Error(`Timeout ${name}`);}
@@ -46,6 +48,10 @@ try{
   await compose('restart','node-a');await compose('up','-d','--wait','node-a');
   const status=await req(0,'GET',`/v1/uploads/${session.id}`);assert.equal(status.parts.length,1);assert.equal(status.parts[0].sha256,sha(bytes.subarray(0,session.partSize)));
   await req(0,'PUT',`/v1/uploads/${session.id}/parts/1`,bytes.subarray(session.partSize));const resource=await req(0,'POST',`/v1/uploads/${session.id}/complete`,{});
+  const reviewPath=`/v1/resources/${resource.id}/download`;
+  const reviewArchive=await fetch(host(0)+reviewPath,{headers:headers(0,'GET',reviewPath,Buffer.alloc(0),true)});
+  assert.equal(reviewArchive.status,200);assert.equal(sha(Buffer.from(await reviewArchive.arrayBuffer())),sha(bytes));
+  await req(0,'POST',`/v1/moderation/resources/${resource.id}`,{status:'approved',inspectedContent:true,details:'Verified exact synthetic mesh fixture bytes.'},200,true,true);
   await pass('publisher upload resumes exact persisted part after container restart');
   const hidden=[];for(const visibility of ['private','unlisted'])hidden.push(await upload(0,fixture(4096),visibility,`Hidden ${visibility} mesh`));
   const replicaKey=sha(`${ids[0]}:${resource.id}`);

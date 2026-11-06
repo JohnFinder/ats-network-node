@@ -6,6 +6,7 @@ import { createReadStream } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
 import path from 'node:path';
 import { createMesh } from './mesh.mjs';
+import { createModeration } from './moderation.mjs';
 
 const integer = (name, fallback, max = Number.MAX_SAFE_INTEGER) => {
   const n = Number(process.env[name] ?? fallback);
@@ -27,6 +28,13 @@ if (publicURL.username || publicURL.password || publicURL.search || publicURL.ha
   throw new Error('NODE_PUBLIC_URL must be an HTTPS origin (HTTP loopback is development only)');
 }
 const adminIDs = new Set((process.env.NODE_ADMIN_PUBLIC_KEYS ?? '').split(',').filter(Boolean));
+const translationEnabled = process.env.NODE_TRANSLATION_ENABLED === '1';
+const translationURL = new URL(process.env.NODE_TRANSLATION_PUBLIC_URL ?? publicURL.origin);
+if (translationEnabled && (translationURL.username || translationURL.password || translationURL.search || translationURL.hash ||
+    !['', '/', '/translation', '/translation/'].includes(translationURL.pathname) ||
+    (translationURL.protocol !== 'https:' && !(translationURL.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(translationURL.hostname))))) throw new Error('Invalid NODE_TRANSLATION_PUBLIC_URL');
+const translationBase = translationURL.href.replace(/\/$/, '');
+const translationModel = process.env.NODE_TRANSLATION_MODEL ?? 'translategemma-27b-it';
 const ttsPublicURL = new URL(process.env.NODE_TTS_PUBLIC_URL ?? publicURL.origin);
 if (process.env.NODE_TTS_ENABLED === '1' && (ttsPublicURL.username || ttsPublicURL.password || ttsPublicURL.search || ttsPublicURL.hash || ttsPublicURL.pathname !== '/' ||
     (ttsPublicURL.protocol !== 'https:' && !(ttsPublicURL.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(ttsPublicURL.hostname))))) throw new Error('NODE_TTS_PUBLIC_URL must be an HTTPS origin (HTTP loopback is development only)');
@@ -68,6 +76,11 @@ CREATE INDEX IF NOT EXISTS download_time ON download_events(created);
 CREATE TABLE IF NOT EXISTS attestations(hash TEXT PRIMARY KEY, resource TEXT NOT NULL, payload TEXT NOT NULL, created INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS attestation_resource_time ON attestations(resource,created);
 `);
+if (!db.prepare('PRAGMA table_info(resources)').all().some(column => column.name === 'moderation_status')) {
+  db.exec("ALTER TABLE resources ADD COLUMN moderation_status TEXT NOT NULL DEFAULT 'pending'");
+}
+db.exec('CREATE INDEX IF NOT EXISTS resource_moderation_queue ON resources(moderation_status,visibility,created,id)');
+const moderation = createModeration(db, adminIDs, process.env.NODE_MODERATION_CONTACT_URL);
 await chmod(path.join(dataDir, 'node.sqlite'), 0o600);
 // A crash during completion leaves the original durable parts available for retry.
 db.prepare("UPDATE uploads SET status='pending' WHERE status='completing'").run();
@@ -130,7 +143,8 @@ const resourceResponse = r => {
   const metadata = JSON.parse(r.metadata);
   return { id: r.id, title: metadata.title, summary: metadata.summary, language: metadata.language, tags: metadata.tags,
     sha256: r.sha, byteCount: r.bytes, sources: [`${publicURL.origin}/v1/resources/${r.id}/download`], encrypted: metadata.encrypted,
-    publisherID: r.owner, createdAt: iso(r.created), downloads: r.downloads, visibility: r.visibility };
+    publisherID: r.owner, createdAt: iso(r.created), downloads: r.downloads, visibility: r.visibility,
+    ...(r.visibility === 'private' ? {} : { moderationStatus: r.moderation_status }) };
 };
 const metadata = value => {
   const string = (v, max, required = false) => {
@@ -152,11 +166,15 @@ const getResource = (req, url, id) => {
     // It never grants access to metadata, evidence, list, or other resources.
     const ticket = url.pathname === `/v1/resources/${id}/download` && url.searchParams.get('ticket');
     const grant = ticket && uuidPattern.test(ticket) && db.prepare('SELECT 1 FROM tickets WHERE id=? AND resource=? AND owner=? AND created>?').get(ticket, id, r.owner, now() - 86400);
-    if (grant) return r;
+    if (grant) return { resource: r, publiclyVisible: false };
+  }
+  const publiclyVisible = r.visibility !== 'private' && Boolean(moderation.info) && r.moderation_status === 'approved';
+  if (!publiclyVisible) {
+    if (!req.headers['x-ats-public-key'] && r.visibility !== 'private') throw fail(404, 'resource_not_found');
     const owner = authenticate(req, url, Buffer.alloc(0));
     if (owner !== r.owner && !adminIDs.has(owner)) throw fail(404, 'resource_not_found');
   }
-  return r;
+  return { resource: r, publiclyVisible };
 };
 const filePath = (folder, id, part) => path.join(dataDir, folder, id, ...(part === undefined ? [] : [String(part)]));
 const objectPath = id => path.join(dataDir, 'objects', id);
@@ -208,7 +226,7 @@ const complete = async upload => {
   }
 };
 
-const mesh = await createMesh({ db, dataDir, providerID, providerPublicKey, providerKey, publicURL, maxFile, totalQuota, maxEntries, resourceResponse, metadata });
+const mesh = await createMesh({ db, dataDir, providerID, providerPublicKey, providerKey, publicURL, maxFile, totalQuota, maxEntries, resourceResponse, metadata, moderationEnabled: Boolean(moderation.info) });
 
 async function route(req, res) {
   const url = new URL(req.url, 'http://node.invalid');
@@ -220,8 +238,10 @@ async function route(req, res) {
     const disk = await statfs(dataDir);
     return json(res, 200, {
     schemaVersion: 1, nodeVersion: '0.2.0', providerID, publicKey: providerPublicKey.toString('base64'), providerAddress, publicURL: publicURL.origin,
-    partSize, maximumFileBytes: maxFile, capabilities: ['resumable-upload', 'public-search', 'range-download', 'signed-evidence', 'signed-federation', 'public-replication', 'retention-leases', ...(process.env.NODE_TTS_ENABLED === '1' ? ['voxcpm2-speech'] : [])],
+    ...(moderation.info ? { moderation: moderation.info } : {}),
+    partSize, maximumFileBytes: maxFile, capabilities: ['resumable-upload', 'public-search', 'range-download', 'signed-evidence', 'signed-federation', 'public-replication', 'retention-leases', ...(process.env.NODE_TTS_ENABLED === '1' ? ['voxcpm2-speech'] : []), ...(translationEnabled ? ['text-translation'] : [])],
     ...(process.env.NODE_TTS_ENABLED === '1' ? { tts: { model: 'openbmb/VoxCPM2', endpoint: `${ttsPublicURL.origin}/v1/audio/speech`, modelsEndpoint: `${ttsPublicURL.origin}/v1/models`, authentication: 'bearer-api-key', sampleRate: 48000, readiness: 'check-authenticated-models-endpoint' } } : {}),
+    ...(translationEnabled ? { translation: { model: translationModel, endpoint: `${translationBase}/v1/translations`, modelsEndpoint: `${translationBase}/v1/models`, authentication: 'bearer-api-key', discoveryService: '_ats-translation._tcp', readiness: 'check-authenticated-models-endpoint' } } : {}),
     rewards: { mode: 'external-attested-escrow', automaticMinting: false }
     ,storage: { configuredQuotaBytes: totalQuota, availableDiskBytes: disk.bavail * disk.bsize }
     });
@@ -229,6 +249,7 @@ async function route(req, res) {
   if (req.method === 'POST' && url.pathname === '/v1/uploads') {
     const bytes = await body(req, 16384), owner = authenticate(req, url, bytes), value = parse(bytes), m = metadata(value);
     if (mesh.draining) throw fail(503, 'node_draining');
+    if (m.visibility !== 'private') moderation.requireAvailable();
     if (m.visibility === 'public' && Object.keys(value).some(k => !['sha256','byteCount','title','summary','language','tags','visibility','encrypted'].includes(k))) throw fail(400, 'unknown_public_metadata_field');
     const ownerBytes = db.prepare("SELECT COALESCE(SUM(bytes),0) AS bytes FROM uploads WHERE owner=? AND (status='complete' OR expires>=?)").get(owner, now()).bytes;
     const totalBytes = db.prepare("SELECT COALESCE(SUM(bytes),0) AS bytes FROM uploads WHERE status='complete' OR expires>=?").get(now()).bytes;
@@ -291,8 +312,57 @@ async function route(req, res) {
     if (query.length > 200 || !['recent', 'downloads', 'trending'].includes(sort) || !Number.isInteger(limit) || limit < 1 || limit > 100 || !Number.isSafeInteger(cursor) || cursor < 0 || cursor > 1000000) throw fail(400, 'invalid_search');
     return json(res, 200, mesh.catalogue(url));
   }
+  if (segments[0] === 'v1' && segments[1] === 'moderation') {
+    const bytes = await body(req, 16384), operator = authenticate(req, url, bytes);
+    moderation.requireOperator(operator);
+    if (req.method === 'GET' && url.pathname === '/v1/moderation/queue') {
+      const items = db.prepare("SELECT * FROM resources WHERE moderation_status='pending' AND visibility<>'private' ORDER BY created,id LIMIT 100 OFFSET ?")
+        .all(moderation.offset(url)).map(resourceResponse);
+      return json(res, 200, { items });
+    }
+    if (req.method === 'GET' && url.pathname === '/v1/moderation/reports') return json(res, 200, { items: moderation.reports(moderation.offset(url)) });
+    if (req.method === 'POST' && segments.length === 5 && segments[2] === 'reports' && segments[4] === 'resolve' && uuidPattern.test(segments[3])) {
+      return json(res, 200, moderation.resolve(segments[3], operator, parse(bytes)));
+    }
+    if (req.method === 'POST' && segments.length === 4 && segments[2] === 'resources' && uuidPattern.test(segments[3])) {
+      const value = parse(bytes), id = segments[3];
+      if (value.originProviderID != null && value.originProviderID !== providerID) {
+        const record = mesh.reportTarget(value.originProviderID, id);
+        if (!record) throw fail(404, 'resource_not_found');
+        return json(res, 200, moderation.decide(`mesh:${record.key}`, record.status, operator, value, () => {}));
+      }
+      const resource = db.prepare("SELECT * FROM resources WHERE id=? AND visibility<>'private'").get(id);
+      if (!resource) throw fail(404, 'resource_not_found');
+      if (value.status === 'approved' && resource.owner === operator) throw fail(403, 'independent_reviewer_required');
+      return json(res, 200, moderation.decide(`book:${id}`, resource.moderation_status, operator, value, status => {
+        db.prepare('UPDATE resources SET moderation_status=? WHERE id=?').run(status, id);
+        if (status === 'removed') mesh.remove(id, resource.visibility === 'public');
+      }));
+    }
+    throw fail(404, 'not_found');
+  }
   if (segments[0] === 'v1' && segments[1] === 'resources' && uuidPattern.test(segments[2] ?? '')) {
     const id = segments[2];
+    if (req.method === 'GET' && segments.length === 4 && segments[3] === 'moderation') {
+      moderation.requireAvailable();
+      const origin = url.searchParams.get('originProviderID');
+      const status = origin !== null && origin !== providerID
+        ? mesh.reportTarget(origin, id, { requireFresh: true })?.status
+        : db.prepare("SELECT moderation_status AS status FROM resources WHERE id=? AND visibility<>'private'").get(id)?.status;
+      if (status !== 'approved' && status !== 'removed') throw fail(404, 'resource_not_found');
+      return json(res, 200, { moderationStatus: status });
+    }
+    if (req.method === 'POST' && segments.length === 4 && segments[3] === 'reports') {
+      const bytes = await body(req, 16384), subject = authenticate(req, url, bytes), value = parse(bytes);
+      if (value.originProviderID != null && value.originProviderID !== providerID) {
+        const record = mesh.reportTarget(value.originProviderID, id);
+        if (!record || record.status !== 'approved') throw fail(404, 'resource_not_found');
+        return json(res, 201, moderation.report(`mesh:${record.key}`, subject, value, record.resource));
+      }
+      const resource = db.prepare("SELECT * FROM resources WHERE id=? AND visibility<>'private' AND moderation_status='approved'").get(id);
+      if (!resource) throw fail(404, 'resource_not_found');
+      return json(res, 201, moderation.report(`book:${id}`, subject, value, { ...resourceResponse(resource), originProviderID: providerID }));
+    }
     if (req.method === 'DELETE' && segments.length === 3) {
       const bytes = await body(req, 1024), owner = authenticate(req, url, bytes);
       const r = db.prepare('SELECT * FROM resources WHERE id=?').get(id);
@@ -307,7 +377,7 @@ async function route(req, res) {
     if (req.method === 'POST' && segments[3] === 'downloads' && segments.length === 4) {
       const bytes = await body(req, 1024), owner = authenticate(req, url, bytes);
       const r = db.prepare('SELECT * FROM resources WHERE id=?').get(id);
-      if (!r || (r.visibility === 'private' && r.owner !== owner)) throw fail(404, 'resource_not_found');
+      if (!r || (r.visibility === 'private' ? r.owner !== owner : !moderation.info || r.moderation_status !== 'approved')) throw fail(404, 'resource_not_found');
       const recent = db.prepare('SELECT COUNT(*) AS n FROM tickets WHERE owner=? AND created>?').get(owner, now() - 3600).n;
       if (recent >= 120 || db.prepare('SELECT COUNT(*) AS n FROM tickets').get().n >= maxEntries * 10) throw fail(429, 'download_ticket_limit');
       const ticket = randomUUID();
@@ -315,7 +385,7 @@ async function route(req, res) {
       return json(res, 201, { id: ticket, downloadURL: `${publicURL.origin}/v1/resources/${id}/download?ticket=${ticket}` });
     }
     if (req.method === 'GET') {
-      const r = getResource(req, url, id);
+      const { resource: r, publiclyVisible } = getResource(req, url, id);
       if (segments.length === 3) return json(res, 200, resourceResponse(r));
       if (segments.length === 4 && segments[3] === 'evidence') {
         const size = (await stat(objectPath(id))).size;
@@ -344,9 +414,13 @@ async function route(req, res) {
         }
         const file = await open(objectPath(id), 'r');
         if ((await file.stat()).size !== r.bytes) { await file.close(); throw fail(503, 'stored_object_unavailable'); }
+        if (publiclyVisible && !db.prepare("SELECT 1 FROM resources WHERE id=? AND moderation_status='approved'").get(id)) {
+          await file.close();
+          throw fail(404, 'resource_not_found');
+        }
         res.writeHead(status, { 'Content-Type': 'application/vnd.anyaudiobooks.book', 'Content-Length': end - start + 1,
           'Accept-Ranges': 'bytes', ETag: `"${r.sha}"`, 'Content-Disposition': `attachment; filename="${id}.atsbook"`,
-          'Cache-Control': r.visibility === 'private' || ticket ? 'private, no-store' : 'public, max-age=3600', 'X-Content-Type-Options': 'nosniff',
+          'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff',
           ...(status === 206 ? { 'Content-Range': `bytes ${start}-${end}/${r.bytes}` } : {}) });
         await pipeline(file.createReadStream({ start, end, autoClose: true }), res);
         if (ticket && !ticket.completed && db.prepare('SELECT 1 FROM tickets WHERE id=?').get(ticket.id)) {

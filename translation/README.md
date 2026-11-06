@@ -1,12 +1,12 @@
 # Network document translation
 
-> This guide describes the translation module in the ATS workspace. This standalone checkout contains the guide. Run its commands from a workspace revision that includes the translation service and Compose overlays.
-
 Translation runs independently of speech synthesis. The gateway authenticates model discovery and translation requests with a bearer API key. `GET /v1/node` advertises the model, endpoints and authentication method in its `translation` field. ATS checks the authenticated model list before using the service.
 
 ## Start the gateway
 
 For an operator-managed OpenAI-compatible upstream, set `TRANSLATION_UPSTREAM` to its origin and `TRANSLATION_MODEL` to the exact ID returned by its model list. Set these in the node's private `.env`. The default `TRANSLATION_PROMPT_FORMAT=translategemma` uses the delimiter format expected by the vLLM TranslateGemma template. Use `chat` for a general chat model. If the upstream requires a key, mount it in a Compose override and set `TRANSLATION_UPSTREAM_KEY_FILE` to its container path. The gateway uses that credential separately from the client API key.
+
+Set up a reachable upstream before starting the gateway with the commands below. From the gateway container, a host service uses a reachable host address such as `http://host.docker.internal:8000`. The default `http://translation-engine:8000` resolves only when you include the private NVIDIA backend overlay.
 
 Run one of these commands from the node repository root on Linux.
 
@@ -22,13 +22,21 @@ scripts/start-translation-node.sh --public
 
 The script creates or preserves `secrets/translation_api_key`. Share the key with authorized users through a secure channel. The script keeps it out of console output and `.env`.
 
-With `--lan`, the gateway binds to the host's network interfaces and the foreground Avahi publisher advertises `_ats-translation._tcp`. Limit access to the intended subnet with the host firewall. Stopping the publisher withdraws the advertisement. To stop the gateway as well, run `docker compose -f compose.yaml -f compose.translation.yaml stop translation`. Clients can enter the address manually on networks without discovery.
+The default local base is `http://127.0.0.1:8792`. Set `TRANSLATION_PORT` in `.env` to choose a different host port. The container continues to listen on 8792. Update any manually configured base URL to match.
+
+With `--lan`, the gateway listens on the host's IPv4 interfaces. The foreground Avahi publisher advertises `_ats-translation._tcp` using the port that Compose actually published. Limit access to the intended subnet with the host firewall. Stopping the publisher withdraws the advertisement. To stop the gateway as well, run `docker compose -f compose.yaml -f compose.translation.yaml stop translation`. On networks without discovery, enter the host's LAN address and published port manually.
+
+With `--public`, the advertised translation base is `https://node.example.com/translation` for a node at `https://node.example.com`. Replace the example domain with your own. The community node option in ATS requires this same-origin route. For a gateway on a different origin or port, connect directly by entering its base address.
 
 ## Run an optional NVIDIA backend
 
-Generate the API key with the startup helper first. Use the following overlay to run a private inference backend on the NVIDIA host. The first start downloads weights and requires enough GPU memory for the model and runtime.
+On the NVIDIA host, leave `TRANSLATION_UPSTREAM` unset or set it to `http://translation-engine:8000`. Generate the API key and start the private backend from the node repository root. The first start downloads weights and requires enough GPU memory for the model and runtime.
 
 ```sh
+umask 077
+mkdir -p secrets
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" -w /work \
+  node:24-alpine node tts/scripts/create-key.mjs secrets/translation_api_key
 export TRANSLATION_SECRET_GID=$(stat -c '%g' secrets/translation_api_key)
 docker compose -f compose.yaml -f compose.translation.yaml -f compose.translation-engine.yaml up -d --build
 ```

@@ -1,0 +1,1 @@
+{"name":"@ats-network/voice-market","version":"0.1.0","private":true,"type":"module","engines":{"node":">=24.0.0"},"scripts":{"start":"node src/server.mjs","check":"node --check src/server.mjs && node --check src/economy.mjs && node --check src/chain-settlement.mjs"},"dependencies":{"ethers":"6.15.0"},"license":"Apache-2.0"}

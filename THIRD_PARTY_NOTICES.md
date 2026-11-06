@@ -10,7 +10,10 @@ The root Apache-2.0 license applies to project-owned code and documentation. Dep
 | VoxCPM implementation | Pinned `voxcpm` package | [OpenBMB/VoxCPM](https://github.com/OpenBMB/VoxCPM) and installed license files |
 | VoxCPM2 weights | Pinned revision downloaded on target host | [Model repository](https://huggingface.co/openbmb/VoxCPM2/tree/32279effe8c19989596f05d353d1447f51d9e915) |
 | OpenZeppelin, ethers, Ganache and solc | `contracts/package-lock.json` | Installed package licenses and transitive notices |
-| ethers | `services/package-lock.json` | Installed package licenses and notices |
+| ethers | `services/package-lock.json` and `voice-market/package-lock.json` | Installed package licenses and notices |
+| FFmpeg | Speech gateway image package for AAC encoding | Installed package notices |
+| TranslateGemma weights | Optional NVIDIA translation backend | [Model repository](https://huggingface.co/Infomaniak-AI/vllm-translategemma-27b-it) |
+| Stable Audio Open and MiniMax Music 3 | Operator-provided weights and inference packages | [Music deployment and model terms](music/README.md) |
 | Synapse SDK/core and viem | `storage/package-lock.json` | Installed package licenses and notices |
 
 Use the npm lockfiles to identify the resolved packages and the notices shipped with each installed package for its license terms. The project declares Apache-2.0 for its own package entries. Dependency entries retain the corresponding upstream declarations.

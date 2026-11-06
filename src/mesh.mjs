@@ -60,7 +60,7 @@ async function readJSON(peer, pathname, maximum, allowPrivate) {
   for await(const c of res){size+=c.length;if(size>maximum){res.destroy();throw fail(413,'snapshot_too_large');}chunks.push(c);}
   try{return JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{throw fail(502,'invalid_peer_json');}
 }
-export async function createMesh({db,dataDir,providerID,providerPublicKey,providerKey,publicURL,maxFile,totalQuota,maxEntries,resourceResponse,metadata}) {
+export async function createMesh({db,dataDir,providerID,providerPublicKey,providerKey,publicURL,maxFile,totalQuota,maxEntries,resourceResponse,metadata,moderationEnabled}) {
   const allowPrivate=process.env.NODE_ALLOW_PRIVATE_PEERS==='1';
   let peers;try{peers=JSON.parse(process.env.NODE_PEERS??'[]');}catch{throw new Error('Invalid NODE_PEERS');}
   if(!Array.isArray(peers)||peers.length>32)throw new Error('NODE_PEERS supports at most 32 pinned peers');
@@ -89,10 +89,12 @@ export async function createMesh({db,dataDir,providerID,providerPublicKey,provid
     CREATE TABLE IF NOT EXISTS retention_nonces(domain TEXT PRIMARY KEY,nonce INTEGER NOT NULL,until INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS mesh_tombstones(id TEXT PRIMARY KEY,created INTEGER NOT NULL);`);
   let syncing=false,lastSync=null,lastError=null;const peerStatus=new Map();
+  const visibleRecord = "json_extract(m.resource,'$.moderationStatus')='approved' AND NOT EXISTS (SELECT 1 FROM moderation_decisions d WHERE d.target='mesh:' || m.key AND d.status='removed')";
   const proofFrom=(req,url,bytes)=>({bodyBytes:bytes.toString('base64'),audience:req.headers['x-ats-audience'],method:'POST',path:url.pathname+url.search,timestamp:req.headers['x-ats-timestamp'],nonce:req.headers['x-ats-nonce'],publicKey:req.headers['x-ats-public-key'],signature:req.headers['x-ats-signature']});
   function validDescriptor(envelope){
     const {payload:p,signer}=verified(envelope,allowed,32768);
     if(p.type!=='ats-publication-v1'||p.schemaVersion!==1||p.originProviderID!==signer||p.originURL!==pins.get(signer)||!uuid.test(p.resource?.id)||p.resource.visibility!=='public'||!Number.isSafeInteger(p.created)||p.created>now()+300)throw fail(400,'invalid_publication_descriptor');
+    if(p.resource.moderationStatus!=='approved')return null;
     const proof=p.publisherProof,b=base64(proof?.bodyBytes,16384),key=base64(proof?.publicKey,32),sig=base64(proof?.signature,64);
     if(key.length!==32||sig.length!==64||proof.audience!==p.originURL||proof.method!=='POST'||proof.path!=='/v1/uploads'||!/^\d{1,12}$/.test(proof.timestamp)||!uuid.test(proof.nonce))throw fail(400,'invalid_publisher_proof');
     const msg=`ATS-NODE-V1\n${proof.audience}\nPOST\n/v1/uploads\n${proof.timestamp}\n${proof.nonce}\n${sha(b)}`;
@@ -105,20 +107,22 @@ export async function createMesh({db,dataDir,providerID,providerPublicKey,provid
     for(const k of ['title','summary','language','encrypted','visibility'])if(r[k]!==m[k])throw fail(400,'substituted_metadata');
     if(JSON.stringify(r.tags)!==JSON.stringify(m.tags)||r.createdAt!==new Date(p.created*1000).toISOString())throw fail(400,'substituted_metadata');
     // Sources and statistics are derived locally; untrusted descriptor URLs/counts never control network requests.
-    const safe={id:r.id,title:m.title,summary:m.summary,language:m.language,tags:m.tags,encrypted:m.encrypted,visibility:'public',sha256:r.sha256,byteCount:r.byteCount,publisherID:sha(key),createdAt:r.createdAt,sources:[`${p.originURL}/v1/resources/${r.id}/download`],downloads:0,originProviderID:signer,originURL:p.originURL,publisherAuthentication:'signed-upload-request',descriptorHash:sha(Buffer.from(JSON.stringify(envelope)))};
+    const safe={id:r.id,title:m.title,summary:m.summary,language:m.language,tags:m.tags,encrypted:m.encrypted,visibility:'public',moderationStatus:'approved',sha256:r.sha256,byteCount:r.byteCount,publisherID:sha(key),createdAt:r.createdAt,sources:[`${p.originURL}/v1/resources/${r.id}/download`],downloads:0,originProviderID:signer,originURL:p.originURL,publisherAuthentication:'signed-upload-request',descriptorHash:sha(Buffer.from(JSON.stringify(envelope)))};
     const k=sha(`${signer}:${r.id}`);
     return {key:k,origin:signer,id:r.id,resource:safe,envelope};
   }
   const localDescriptor=r=>{
+    if(!moderationEnabled||r.moderation_status!=='approved')return null;
     const auth=db.prepare('SELECT proof FROM publication_auth WHERE id=?').get(r.id);
     if(!auth)return null;
     return signed({schemaVersion:1,type:'ats-publication-v1',originProviderID:providerID,originURL:publicURL.origin,created:r.created,resource:{...resourceResponse(r),downloads:0},publisherProof:JSON.parse(auth.proof)},providerKey,providerPublicKey);
   };
   const snapshot=offset=>{
-    const own=db.prepare("SELECT * FROM resources WHERE visibility='public' ORDER BY id LIMIT 1000").all().map(localDescriptor).filter(Boolean);
-    const remote=db.prepare('SELECT descriptor FROM mesh_records WHERE seen>? ORDER BY key LIMIT 1000').all(now()-7*86400).map(r=>JSON.parse(r.descriptor));
+    const own=moderationEnabled?db.prepare("SELECT * FROM resources WHERE visibility='public' AND moderation_status='approved' ORDER BY id LIMIT 1000").all().map(localDescriptor).filter(Boolean):[];
+    const remote=moderationEnabled?db.prepare(`SELECT m.descriptor FROM mesh_records m WHERE m.seen>? AND ${visibleRecord} ORDER BY m.key LIMIT 1000`).all(now()-staleSeconds).map(r=>JSON.parse(r.descriptor)):[];
     const entries=[...own,...remote].slice(0,1000);
-    return signed({schemaVersion:1,type:'ats-mesh-snapshot-v1',providerID,originURL:publicURL.origin,generatedAt:now(),items:entries.slice(offset,offset+100),replicaKeys:db.prepare("SELECT key FROM mesh_replicas WHERE status='ready' ORDER BY key LIMIT 1000").all().map(r=>r.key),tombstones:db.prepare('SELECT id FROM mesh_tombstones ORDER BY created DESC LIMIT 1000').all().map(r=>r.id),nextCursor:entries.length>offset+100?offset+100:null},providerKey,providerPublicKey);
+    const replicaKeys=moderationEnabled?db.prepare(`SELECT m.key FROM mesh_records m JOIN mesh_replicas r ON m.key=r.key WHERE r.status='ready' AND m.seen>? AND ${visibleRecord} ORDER BY m.key LIMIT 1000`).all(now()-staleSeconds).map(r=>r.key):[];
+    return signed({schemaVersion:1,type:'ats-mesh-snapshot-v1',providerID,originURL:publicURL.origin,generatedAt:now(),items:entries.slice(offset,offset+100),replicaKeys,tombstones:db.prepare('SELECT id FROM mesh_tombstones ORDER BY created DESC LIMIT 1000').all().map(r=>r.id),nextCursor:entries.length>offset+100?offset+100:null},providerKey,providerPublicKey);
   };
   const recordPath=key=>path.join(dataDir,'replicas',key);
   async function replicate(record){
@@ -167,10 +171,11 @@ export async function createMesh({db,dataDir,providerID,providerPublicKey,provid
             const {payload:p}=verified(envelope,new Set([peer.providerID]),4*1024**2);
             if(p.type!=='ats-mesh-snapshot-v1'||p.schemaVersion!==1||p.providerID!==peer.providerID||p.originURL!==peer.url||!Number.isSafeInteger(p.generatedAt)||Math.abs(now()-p.generatedAt)>300||!Array.isArray(p.items)||p.items.length>100||!Array.isArray(p.tombstones)||p.tombstones.length>1000||!Array.isArray(p.replicaKeys)||p.replicaKeys.length>1000||p.replicaKeys.some(k=>!digest.test(k)))throw fail(400,'invalid_snapshot');
             for(const id of p.tombstones){if(!uuid.test(id))throw fail(400,'invalid_tombstone');const key=sha(`${peer.providerID}:${id}`);db.prepare('INSERT OR REPLACE INTO mesh_deleted VALUES(?,?)').run(key,now());db.prepare('DELETE FROM mesh_records WHERE key=?').run(key);await rm(recordPath(key),{force:true});await rm(`${recordPath(key)}.partial`,{force:true});db.prepare('DELETE FROM mesh_replicas WHERE key=?').run(key);}
-            for(const e of p.items){const r=validDescriptor(e);if(r.origin===providerID||db.prepare('SELECT 1 FROM mesh_deleted WHERE key=?').get(r.key))continue;const old=db.prepare('SELECT descriptor FROM mesh_records WHERE key=?').get(r.key);
-              if(old){const previous=validDescriptor(JSON.parse(old.descriptor));if(previous.resource.sha256!==r.resource.sha256||JSON.stringify(previous.envelope)!==JSON.stringify(e))throw fail(409,'descriptor_conflict');}
+            // Only the pinned origin may renew visibility. Mirrors can still advertise verified custody.
+            for(const e of p.items){const r=validDescriptor(e);if(!r||!moderationEnabled||r.origin!==peer.providerID||db.prepare('SELECT 1 FROM mesh_deleted WHERE key=?').get(r.key))continue;const old=db.prepare('SELECT descriptor FROM mesh_records WHERE key=?').get(r.key);
+              if(old){const previous=validDescriptor(JSON.parse(old.descriptor));if(previous&&(previous.resource.sha256!==r.resource.sha256||JSON.stringify(previous.envelope)!==JSON.stringify(e)))throw fail(409,'descriptor_conflict');}
               if(!old&&db.prepare('SELECT COUNT(*) AS n FROM mesh_records').get().n>=Math.min(maxEntries,1000))break;
-              db.prepare('INSERT INTO mesh_records(key,origin,id,descriptor,resource,seen,bytes,sha) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET seen=excluded.seen').run(r.key,r.origin,r.id,JSON.stringify(e),JSON.stringify(r.resource),now(),r.resource.byteCount,r.resource.sha256);
+              db.prepare('INSERT INTO mesh_records(key,origin,id,descriptor,resource,seen,bytes,sha) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET seen=excluded.seen,descriptor=excluded.descriptor,resource=excluded.resource,bytes=excluded.bytes,sha=excluded.sha').run(r.key,r.origin,r.id,JSON.stringify(e),JSON.stringify(r.resource),now(),r.resource.byteCount,r.resource.sha256);
             }
             db.prepare('DELETE FROM mesh_sources WHERE peer=?').run(peer.providerID);
             for(const key of p.replicaKeys)if(db.prepare('SELECT 1 FROM mesh_records WHERE key=?').get(key))db.prepare('INSERT INTO mesh_sources VALUES(?,?,?)').run(key,peer.providerID,now());
@@ -188,10 +193,11 @@ export async function createMesh({db,dataDir,providerID,providerPublicKey,provid
       for(const row of db.prepare('SELECT key FROM mesh_records WHERE seen<?').all(now()-7*86400)){
         db.prepare('DELETE FROM mesh_records WHERE key=?').run(row.key);db.prepare('DELETE FROM mesh_replicas WHERE key=?').run(row.key);await rm(recordPath(row.key),{force:true});await rm(`${recordPath(row.key)}.partial`,{force:true});
       }
-      if(!draining){
+      if(!draining&&moderationEnabled){
         const candidates=[providerID,...peers.filter(p=>peerStatus.get(p.providerID)?.online&&!peerStatus.get(p.providerID)?.draining).map(p=>p.providerID)];
-        for(const row of db.prepare('SELECT descriptor FROM mesh_records WHERE seen>? ORDER BY key LIMIT 1000').all(now()-staleSeconds)){
+        for(const row of db.prepare(`SELECT m.descriptor FROM mesh_records m WHERE m.seen>? AND ${visibleRecord} ORDER BY m.key LIMIT 1000`).all(now()-staleSeconds)){
           const r=validDescriptor(JSON.parse(row.descriptor));
+          if(!r)continue;
           const selected=candidates.toSorted((a,b)=>sha(`${r.key}:${a}`).localeCompare(sha(`${r.key}:${b}`))).slice(0,desired);
           if(selected.includes(providerID))try{await replicate(r);}catch{lastError='replica_transfer_failed';}
         }
@@ -199,7 +205,7 @@ export async function createMesh({db,dataDir,providerID,providerPublicKey,provid
       lastSync=now();
     }finally{syncing=false;}
   }
-  function publicItems(onlyKey=null){return db.prepare('SELECT * FROM mesh_records WHERE seen>? AND (? IS NULL OR key=?) ORDER BY key LIMIT 1000').all(now()-7*86400,onlyKey,onlyKey).map(row=>{
+  function publicItems(onlyKey=null){return db.prepare(`SELECT m.* FROM mesh_records m WHERE m.seen>? AND (? IS NULL OR m.key=?) AND ${visibleRecord} ORDER BY m.key LIMIT 1000`).all(now()-staleSeconds,onlyKey,onlyKey).map(row=>{
     const r=JSON.parse(row.resource),replica=db.prepare("SELECT 1 FROM mesh_replicas WHERE key=? AND status='ready'").get(row.key);
     for(const source of db.prepare('SELECT peer FROM mesh_sources WHERE key=? AND seen>?').all(row.key,now()-staleSeconds)){const peer=peers.find(p=>p.providerID===source.peer);if(peer)r.sources.push(`${peer.url}/v1/mesh/objects/${row.key}`);}
     if(replica)r.sources.unshift(`${publicURL.origin}/v1/mesh/objects/${row.key}`);
@@ -212,6 +218,7 @@ export async function createMesh({db,dataDir,providerID,providerPublicKey,provid
   function catalogue(url){
     const query=url.searchParams.get('q')??'',sort=url.searchParams.get('sort')??'recent',limit=Number(url.searchParams.get('limit')??30),cursor=Number(url.searchParams.get('cursor')??0);
     if(query.length>200||!['recent','downloads','trending'].includes(sort)||!Number.isSafeInteger(limit)||limit<1||limit>100||!Number.isSafeInteger(cursor)||cursor<0||cursor>1000000)throw fail(400,'invalid_search');
+    if(!moderationEnabled)return {items:[],nextCursor:null,rankingScope:'local-observed-activity',federation:true};
     const terms=query.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean), clauses=terms.map(()=>"LOWER(COALESCE(json_extract(metadata,'$.title'),'') || ' ' || COALESCE(json_extract(metadata,'$.summary'),'') || ' ' || COALESCE(json_extract(metadata,'$.language'),'') || ' ' || COALESCE(json_extract(metadata,'$.tags'),'')) LIKE ? ESCAPE '\\'");
     const filters=terms.map(t=>`%${t.replace(/[\\%_]/g,'\\$&')}%`);
     // SQLite selects only this page. Do not load every local manifest into the HTTP process.
@@ -219,16 +226,24 @@ export async function createMesh({db,dataDir,providerID,providerPublicKey,provid
     const rows=db.prepare(`WITH combined AS (
       SELECT 'local' AS kind,r.id AS key,r.metadata AS metadata,r.created,r.downloads,
       COALESCE((SELECT SUM(1.0/(1.0+(?-e.created)/172800.0)) FROM download_events e WHERE e.resource=r.id AND e.created>=?),0) AS score
-      FROM resources r WHERE visibility='public'
+      FROM resources r WHERE visibility='public' AND moderation_status='approved'
       UNION ALL
       SELECT 'remote',m.key,m.resource,CAST(strftime('%s',json_extract(m.resource,'$.createdAt')) AS INTEGER),0,0 FROM mesh_records m
-      WHERE m.seen>? AND NOT EXISTS(SELECT 1 FROM resources r WHERE r.id=m.id)
-    ) SELECT kind,key FROM combined ${clauses.length?'WHERE '+clauses.join(' AND '):''} ORDER BY ${order},key LIMIT ? OFFSET ?`).all(now(),now()-30*86400,now()-7*86400,...filters,limit+1,cursor);
+      WHERE m.seen>? AND ${visibleRecord} AND NOT EXISTS(SELECT 1 FROM resources r WHERE r.id=m.id)
+    ) SELECT kind,key FROM combined ${clauses.length?'WHERE '+clauses.join(' AND '):''} ORDER BY ${order},key LIMIT ? OFFSET ?`).all(now(),now()-30*86400,now()-staleSeconds,...filters,limit+1,cursor);
     const items=rows.slice(0,limit).map(row=>{
       if(row.kind==='local'){const r=db.prepare('SELECT * FROM resources WHERE id=?').get(row.key);return {...resourceResponse(r),originProviderID:providerID,originURL:publicURL.origin,publisherAuthentication:db.prepare('SELECT 1 FROM publication_auth WHERE id=?').get(r.id)?'signed-upload-request':'legacy-node-record',originDescriptor:localDescriptor(r),replicas:[]};}
       return publicItems(row.key)[0];
     }).filter(Boolean);
     return {items,nextCursor:rows.length>limit?String(cursor+limit):null,rankingScope:'local-observed-activity',federation:true};
+  }
+  function reportTarget(origin,id,{requireFresh=false}={}){
+    if(typeof origin!=='string'||!digest.test(origin)||!pins.has(origin))return null;
+    const key=sha(`${origin}:${id}`);
+    const row=db.prepare("SELECT resource FROM mesh_records WHERE key=? AND seen>? AND json_extract(resource,'$.moderationStatus')='approved'").get(key,requireFresh?now()-staleSeconds:0);
+    if(!row)return null;
+    const status=db.prepare('SELECT status FROM moderation_decisions WHERE target=?').get(`mesh:${key}`)?.status??'approved';
+    return {key,status,resource:JSON.parse(row.resource)};
   }
   async function route(req,res,url,{body,parse,authenticate,json}){
     if(req.method==='GET'&&url.pathname==='/v1/mesh/resources'){json(res,200,signed({schemaVersion:1,type:'ats-mesh-catalogue-v1',providerID,issuedAt:now(),expiresAt:now()+300,...catalogue(url)},providerKey,providerPublicKey));return true;}
@@ -243,11 +258,14 @@ export async function createMesh({db,dataDir,providerID,providerPublicKey,provid
     }
     const object=/^\/v1\/mesh\/objects\/([a-f0-9]{64})$/.exec(url.pathname);
     if(req.method==='GET'&&object){
-      const key=object[1],r=db.prepare("SELECT * FROM mesh_replicas WHERE key=? AND status='ready'").get(key),record=db.prepare('SELECT 1 FROM mesh_records WHERE key=?').get(key);if(!r||!record)throw fail(404,'replica_not_found');
+      const key=object[1],r=db.prepare("SELECT * FROM mesh_replicas WHERE key=? AND status='ready'").get(key);
+      const visible=db.prepare(`SELECT 1 FROM mesh_records m WHERE m.key=? AND m.seen>? AND ${visibleRecord}`);
+      if(!moderationEnabled||!r||!visible.get(key,now()-staleSeconds))throw fail(404,'replica_not_found');
       let start=0,end=r.bytes-1,status=200;
       if(req.headers.range){const match=/^bytes=(\d+)-(\d*)$/.exec(req.headers.range);if(!match)throw fail(416,'invalid_range');start=Number(match[1]);end=match[2]?Math.min(Number(match[2]),end):end;if(!Number.isSafeInteger(start)||!Number.isSafeInteger(end)||start>end||start>=r.bytes)throw fail(416,'invalid_range');status=206;}
       const file=await open(recordPath(key),'r');if((await file.stat()).size!==r.bytes){await file.close();throw fail(503,'replica_unavailable');}
-      res.writeHead(status,{'Content-Type':'application/vnd.anyaudiobooks.book','Content-Length':end-start+1,'Accept-Ranges':'bytes',ETag:`"${r.sha}"`,'Cache-Control':'public, max-age=3600','X-Content-Type-Options':'nosniff',...(status===206?{'Content-Range':`bytes ${start}-${end}/${r.bytes}`}:{})});
+      if(!visible.get(key,now()-staleSeconds)){await file.close();throw fail(404,'replica_not_found');}
+      res.writeHead(status,{'Content-Type':'application/vnd.anyaudiobooks.book','Content-Length':end-start+1,'Accept-Ranges':'bytes',ETag:`"${r.sha}"`,'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff',...(status===206?{'Content-Range':`bytes ${start}-${end}/${r.bytes}`}:{})});
       const {pipeline}=await import('node:stream/promises');await pipeline(file.createReadStream({start,end,autoClose:true}),res);return true;
     }
     if(req.method==='POST'&&url.pathname==='/v1/retention/quotes'){
@@ -283,5 +301,5 @@ export async function createMesh({db,dataDir,providerID,providerPublicKey,provid
   }
   const timer=setInterval(()=>sync().catch(()=>{lastError='mesh_sync_failed';}),interval*1000);timer.unref();
   const initial=setTimeout(()=>sync().catch(()=>{lastError='mesh_sync_failed';}),200);initial.unref();
-  return {route,publicItems,catalogue,draining,reservedBytes:()=>db.prepare('SELECT COALESCE(SUM(bytes),0) AS n FROM mesh_replicas').get().n,proofFrom,recordAuth:(id,proof)=>db.prepare('INSERT INTO publication_auth VALUES(?,?)').run(id,JSON.stringify(proof)),remove:(id,isPublic)=>{db.prepare('DELETE FROM publication_auth WHERE id=?').run(id);if(!isPublic)return;db.prepare('INSERT OR REPLACE INTO mesh_tombstones VALUES(?,?)').run(id,now());db.prepare('DELETE FROM mesh_tombstones WHERE created<?').run(now()-30*86400);db.prepare('DELETE FROM mesh_tombstones WHERE id IN (SELECT id FROM mesh_tombstones ORDER BY created DESC LIMIT -1 OFFSET ?)').run(maxEntries);},hasLease:id=>!!db.prepare('SELECT 1 FROM retention_orders WHERE resource=? AND until>?').get(id,now()),close:()=>{clearInterval(timer);clearTimeout(initial);}};
+  return {route,publicItems,catalogue,reportTarget,draining,reservedBytes:()=>db.prepare('SELECT COALESCE(SUM(bytes),0) AS n FROM mesh_replicas').get().n,proofFrom,recordAuth:(id,proof)=>db.prepare('INSERT INTO publication_auth VALUES(?,?)').run(id,JSON.stringify(proof)),remove:(id,isPublic)=>{db.prepare('DELETE FROM publication_auth WHERE id=?').run(id);if(!isPublic)return;db.prepare('INSERT OR REPLACE INTO mesh_tombstones VALUES(?,?)').run(id,now());db.prepare('DELETE FROM mesh_tombstones WHERE created<?').run(now()-30*86400);db.prepare('DELETE FROM mesh_tombstones WHERE id IN (SELECT id FROM mesh_tombstones ORDER BY created DESC LIMIT -1 OFFSET ?)').run(maxEntries);},hasLease:id=>!!db.prepare('SELECT 1 FROM retention_orders WHERE resource=? AND until>?').get(id,now()),close:()=>{clearInterval(timer);clearTimeout(initial);}};
 }

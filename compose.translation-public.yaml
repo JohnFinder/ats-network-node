@@ -1,0 +1,11 @@
+# Apply after compose.public.yaml (and gpu-public if used).
+services:
+  node:
+    environment:
+      NODE_TRANSLATION_PUBLIC_URL: https://${NODE_DOMAIN:?Set NODE_DOMAIN in .env}/translation
+  proxy:
+    volumes:
+      - ./Caddyfile.translation:/etc/caddy/Caddyfile:ro
+    depends_on:
+      translation:
+        condition: service_healthy

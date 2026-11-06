@@ -1,5 +1,5 @@
 {$NODE_DOMAIN} {
-    @speech path /v1/audio/speech /v1/models
+    @speech path /v1/audio/speech /v1/audio/references /v1/models
     handle @speech {
         request_body {
             max_size 12MB

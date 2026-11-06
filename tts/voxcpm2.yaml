@@ -29,6 +29,12 @@ stages:
         voxcpm2_runtime_config:
           audio_emit_every: 1
           vae_decode_every: 3
+          # This build turns batched VAE decode off when delayed copy is on.
+          # Book preparation needs that batch, so listening and preparation
+          # share the batched path. Per-request copy overlap is not available.
+          enable_delayed_audio_copy: false
+          delayed_audio_copy_use_events: false
+          enable_vae_cuda_graph: false
           enable_batched_cfm: true
           enable_batched_vae_decode: true
           coalesce_audio_d2h: true

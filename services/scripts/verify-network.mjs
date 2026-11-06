@@ -35,7 +35,7 @@ async function bind(wallet, key) {
   const complete = await expect(`${base}/v2/binding-intents/${made.intentID}/complete`, { walletSignature: signature }); assert.equal(complete.edProofVerified, true);
 }
 await indexReady(); await bind(wallets[1], providerKey); await bind(wallets[2], publisherPair.privateKey);
-function auth(method, pathname, bytes) { const timestamp = String(now()), nonce = randomUUID(), audience = node; const message = `ATS-NODE-V1\n${audience}\n${method}\n${pathname}\n${timestamp}\n${nonce}\n${sha(bytes)}`; return { 'x-ats-audience': audience, 'x-ats-public-key': edRaw(publisherPair.privateKey).toString('base64'), 'x-ats-timestamp': timestamp, 'x-ats-nonce': nonce, 'x-ats-signature': sign(null, Buffer.from(message), publisherPair.privateKey).toString('base64') }; }
+function auth(method, pathname, bytes, key = publisherPair.privateKey) { const timestamp = String(now()), nonce = randomUUID(), audience = node; const message = `ATS-NODE-V1\n${audience}\n${method}\n${pathname}\n${timestamp}\n${nonce}\n${sha(bytes)}`; return { 'x-ats-audience': audience, 'x-ats-public-key': edRaw(key).toString('base64'), 'x-ats-timestamp': timestamp, 'x-ats-nonce': nonce, 'x-ats-signature': sign(null, Buffer.from(message), key).toString('base64') }; }
 const data = Buffer.concat([Buffer.from('ATSBOOK1'), Buffer.alloc(100000, 7)]), archiveHash = sha(data);
 const metadata = { title: '  Service verification book  ', summary: '  Signed upload canonicalization fixture  ', tags: ['sample', 'sample'], encrypted: false, visibility: 'public', sha256: archiveHash, byteCount: data.length };
 let bytes = Buffer.from(JSON.stringify(metadata));
@@ -44,6 +44,11 @@ const partPath = `/v1/uploads/${upload.id}/parts/0`;
 const put = await fetch(`${node}${partPath}`, { method: 'PUT', headers: { ...auth('PUT', partPath, data), 'Content-Type': 'application/octet-stream', 'x-content-sha256': archiveHash }, body: data }); assert.equal(put.status, 200, await put.text());
 const completePath = `/v1/uploads/${upload.id}/complete`; bytes = Buffer.from('{}');
 await expect(`${node}${completePath}`, {}, 200, auth('POST', completePath, bytes));
+const reviewPath = `/v1/resources/${upload.id}/download`;
+const reviewArchive = await fetch(`${node}${reviewPath}`, { headers: auth('GET', reviewPath, Buffer.alloc(0), providerKey) });
+assert.equal(reviewArchive.status, 200); assert.equal(sha(Buffer.from(await reviewArchive.arrayBuffer())), archiveHash);
+const approvePath = `/v1/moderation/resources/${upload.id}`, decision = { status: 'approved', inspectedContent: true, details: 'Verified exact synthetic chain fixture bytes.' };
+await expect(`${node}${approvePath}`, decision, 200, auth('POST', approvePath, Buffer.from(JSON.stringify(decision)), providerKey));
 const made = await expect(`${base}/v2/publication-intents`, { nodeURL: node, resourceID: upload.id }, 201), plan = await expect(`${base}/v2/binding-intents/${made.intentID}`), signature = await wallets[2].signTypedData(plan.domain, plan.types, plan.message), m = plan.message;
 await (await registry.publishFor(m.wallet, m.archiveHash, m.metadataHash, m.previous, plan.recipients, plan.bps, m.nonce, m.expiresAt, signature)).wait(); await indexReady();
 const publicationId = await registry.publicationID(wallets[2].address, m.archiveHash);

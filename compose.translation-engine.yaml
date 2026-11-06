@@ -1,0 +1,44 @@
+# Optional NVIDIA backend. Accept the model's license/access terms separately.
+services:
+  translation:
+    networks: [default, translation-engine]
+    depends_on:
+      translation-engine:
+        condition: service_healthy
+  translation-engine:
+    image: vllm/vllm-openai:v0.14.1-cu130
+    platform: linux/amd64
+    restart: unless-stopped
+    init: true
+    command:
+      - Infomaniak-AI/vllm-translategemma-27b-it
+      - --served-model-name
+      - ${TRANSLATION_MODEL:-translategemma-27b-it}
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --disable-log-requests
+    volumes: ["translation-model-cache:/root/.cache/huggingface"]
+    shm_size: 2gb
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: [CMD, python3, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20m
+      retries: 5
+    # Engine is reachable only by the gateway, never via a published port.
+    networks: [translation-engine]
+    logging:
+      options: {max-size: "10m", max-file: "3"}
+networks:
+  translation-engine:
+volumes:
+  translation-model-cache:

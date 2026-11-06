@@ -27,6 +27,12 @@ sh scripts/start-gpu-node.sh
 
 Set `TTS_MAX_CONCURRENT` in `.env` to configure admission, engine sequences and decode graph capacity. The supported range is 1–128 and the default is 8. Measure memory and performance on the target GPU before raising the limit. KV cache capacity is configured separately. [Deployment concurrency](../tts/README.md#deployment-concurrency)
 
+## Add optional services
+
+- Set a compatible upstream for the translation gateway or include its optional private NVIDIA backend. The startup helper supports loopback, LAN discovery and HTTPS. [Translation guide](../translation/README.md)
+- Run the Node.js music API and the Python worker for the model you enable. Use a separate HTTPS origin for remote clients. [Music guide](../music/README.md)
+- Start the isolated Voice Market Compose service with reviewer configuration and choose sandbox credits or Base Sepolia test transactions. [Voice Market guide](../voice-market/README.md)
+
 ## Publish over HTTPS
 
 Point a domain at the host and make ports 80 and 443 reachable. Set `NODE_DOMAIN` in `.env`. Set storage quotas and define intake, moderation, administrator and backup procedures before accepting uploads.
@@ -43,7 +49,7 @@ An ATS app build can set `ATSCommunityNodeURL` to the deployed HTTPS origin so u
 
 In ATS, export an archive and choose the option to upload it to a node. Select public, unlisted or private visibility. Existing archive encryption is preserved by default. The user manages and shares the decryption key separately.
 
-ATS uploads an immutable snapshot in 8 MiB parts. Uploads can pause and resume after an app restart. After the node validates the size, hash and container marker, public uploads appear in its listings.
+ATS uploads an immutable snapshot in 8 MiB parts. Uploads can pause and resume after an app restart. After validation, public and unlisted uploads enter the review queue. Public uploads appear in search after approval. A public deployment needs administrator key fingerprints and a monitored HTTPS contact page. [Content moderation](OPERATIONS.md#content-moderation)
 
 Download counts and ranking reflect the observations of that node. They do not represent global totals or trigger token issuance.
 
@@ -55,7 +61,7 @@ Run acceptance only on explicit request. GitHub Actions uses manual workflow dis
 sh scripts/verify-docker.sh
 ```
 
-Use `NODE_URL` to select the test node when running `scripts/verify-node.mjs` directly. Its default target is `http://127.0.0.1:18787`. Keep the verification state in the test environment because it contains a disposable identity. A direct run uses `/tmp/ats-network-verification-state.json` unless overridden with `VERIFY_STATE`.
+For a direct run of `scripts/verify-node.mjs`, configure the isolated node with `NODE_ADMIN_PUBLIC_KEYS` and `NODE_MODERATION_CONTACT_URL`. Point `ATS_MODERATION_PRIVATE_KEY_FILE` at the matching disposable review key. Use `NODE_URL` to select the test node. The default target is `http://127.0.0.1:18787`. Keep the verification state in the test environment because it contains a disposable identity. A direct run uses `/tmp/ats-network-verification-state.json` unless overridden with `VERIFY_STATE`.
 
 Set `KEEP_VERIFY_CONTAINERS=1` when running the script if you need to inspect or reuse its isolated deployment. The script prints the project name and state directory. Read `publicResourceID` and `providerID` from its `state.json` and export them as `NODE_RESOURCE_ID` and `EXPECTED_NODE_ID`. Set `VERIFY_PROJECT` to the printed project name and use the same running containers and volumes.
 

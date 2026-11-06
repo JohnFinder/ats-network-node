@@ -10,6 +10,10 @@ export NODE_PUBLIC_URL="http://127.0.0.1:$NODE_PORT"
 export NODE_URL="$NODE_PUBLIC_URL"
 export CHAIN_PORT="${VERIFY_CHAIN_PORT:-18546}"
 export VERIFY_STATE="$TASK_WORK/state.json"
+export ATS_MODERATION_PRIVATE_KEY_FILE="$TASK_WORK/moderator.pem"
+(umask 077; openssl genpkey -algorithm ED25519 -out "$ATS_MODERATION_PRIVATE_KEY_FILE")
+export NODE_ADMIN_PUBLIC_KEYS="$(node scripts/moderation.mjs subject)"
+export NODE_MODERATION_CONTACT_URL="https://moderation.example.invalid/"
 compose() { docker compose -p "$TASK_PROJECT" -f compose.yaml -f compose.chain.yaml "$@"; }
 finish() {
     result=$?

@@ -1,0 +1,36 @@
+# Optional authenticated translation service. Works with CPU/storage nodes too.
+# Supply an operator-controlled OpenAI chat upstream; no arbitrary client URLs.
+services:
+  node:
+    environment:
+      NODE_TRANSLATION_ENABLED: "1"
+      NODE_TRANSLATION_PUBLIC_URL: ${TRANSLATION_PUBLIC_URL:-http://127.0.0.1:8792}
+      NODE_TRANSLATION_MODEL: ${TRANSLATION_MODEL:-translategemma-27b-it}
+  translation:
+    build: ./translation
+    restart: unless-stopped
+    init: true
+    ports:
+      - "${TRANSLATION_BIND:-127.0.0.1}:${TRANSLATION_PORT:-8792}:8792"
+    environment:
+      TRANSLATION_UPSTREAM: ${TRANSLATION_UPSTREAM:-http://translation-engine:8000}
+      TRANSLATION_MODEL: ${TRANSLATION_MODEL:-translategemma-27b-it}
+      TRANSLATION_PROMPT_FORMAT: ${TRANSLATION_PROMPT_FORMAT:-translategemma}
+      TRANSLATION_API_KEY_FILE: /run/secrets/translation_api_key
+      TRANSLATION_MAX_CONCURRENT: ${TRANSLATION_MAX_CONCURRENT:-2}
+      TRANSLATION_TIMEOUT_SECONDS: ${TRANSLATION_TIMEOUT_SECONDS:-120}
+    secrets: [translation_api_key]
+    group_add: ["${TRANSLATION_SECRET_GID:-1000}"]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=32m"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 256m
+    cpus: 2
+    pids_limit: 128
+    logging:
+      options: {max-size: "10m", max-file: "3"}
+secrets:
+  translation_api_key:
+    file: ./secrets/translation_api_key

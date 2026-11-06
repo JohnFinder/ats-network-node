@@ -1,0 +1,5 @@
+# Apply last when exposing both speech and translation on one HTTPS origin.
+services:
+  proxy:
+    volumes:
+      - ./Caddyfile.translation-gpu:/etc/caddy/Caddyfile:ro

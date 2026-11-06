@@ -1,4 +1,5 @@
 FROM node:24-alpine
+RUN apk add --no-cache ffmpeg
 ENV NODE_ENV=production TTS_PORT=8791
 WORKDIR /app
 COPY --chown=node:node package.json ./

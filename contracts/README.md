@@ -102,6 +102,16 @@ A sponsor prefunds each task's specification hash and budget. Votes bind the tas
 
 Run `node scripts/reward-root.mjs INPUT.json` to build a bounded root and proofs. Supply `chainId`, `vault`, `epoch`, `budget`, `categoryCaps`, and up to 100,000 `claims`. Each claim includes `index`, `recipient`, `amount`, `category`, `evidenceHash`, and a unique `awardID`. Use canonical integer strings in smallest token units for amounts. Duplicate indices, duplicate awards, and spending above category or total caps fail. Unallocated funds remain unallocated. Governance selects the evidence and recipients.
 
+## Voice license settlement
+
+The `VoiceLicenseSettlement` contract escrows an 18-decimal non-rebasing token for one personal voice license. Prices use ledger units of 100 per token. The contract computes the 80/15/5 split with integer rounding, then converts each share using `10^16`. Before the immutable hold ends, an administrator can refund and permanently revoke the license. After the hold, settlement pays the rights holder, operator and platform. The contract deploys directly and offers only its specified escrow flows. `FeeOnTransferMock` supplies a short-paying token fixture for the local rejection check.
+
+For a Base Sepolia test deployment, run `npm ci --ignore-scripts` and `npm run compile` from `contracts/`. Use the ABI and bytecode in `artifacts/VoiceLicenseSettlement.json` with a wallet deployment tool on chain 84532. Supply an 18-decimal test token, administrator, operator, platform and the desired hold in seconds (604800 by default). Record the address and exact hold in the node configuration. [Voice Market deployment](../voice-market/README.md)
+
+Deploy a fresh contract for `PACKAGE_KEY_VERSION=2`. Call `registerPackage(resourceId,commercialUnits,noncommercialUnits)` using `resourceId=keccak256(UTF8(packageUUID + "/" + version))`. Purchases use `keccak256(abi.encode(holderWallet,resourceId))`, so each holder controls their registration namespace. Node startup checks the package key version.
+
+For explicit acceptance, install the pinned dependencies for both `contracts/` and `voice-market/` with `npm ci --ignore-scripts` in each directory. From `contracts/`, run `npm run verify:voice-settlement -- --local-only` to exercise the seven-day hold on a disposable local chain. Without that flag, the verifier can also deploy a 90-second fixture on Base Sepolia (84532) if `ATS_DEPLOYER_PRIVATE_KEY` is set and its funder has test ETH. The script keeps the key in the environment, uses no faucet, and targets test settlement. The Base Sepolia entitlement index waits 12 confirmations.
+
 ## Configured deployment
 
 Inspect the deployment plan before using a funded signer:

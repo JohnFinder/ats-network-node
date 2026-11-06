@@ -1,20 +1,32 @@
 # Personal voice license sandbox
 
-This page documents the optional Voice Market integration in the ATS workspace. The standalone node checkout contains this reference only. Run the examples in a workspace with the Voice Market service, Compose file and settlement contract.
-
 This Node.js 24 service issues personal licenses for immutable version 2 voice packages. A rights holder signs a distribution and certificate issuance grant. Buyers can restore Ed25519 certificates, export a PDF copy, and retrieve authorized files. The service supports two test configurations. Sandbox credits stay in an isolated ledger. Base Sepolia uses a confirmed test transaction and leaves the sandbox ledger untouched. With neither mode enabled, purchases return `production_payment_not_configured`. Both modes use test assets and provide no verification of a rights holder's real-world identity or ownership.
 
 ## Start the service
 
-From `NetworkNode/` in the ATS workspace, run:
+Run Docker with Compose V2. From the repository root, create `.env` from `.env.example` for a new installation. Keep the existing `.env` and data volume when upgrading.
+
+Set `VOICE_MARKET_ADMIN_SUBJECTS` to the fingerprint of a reviewer key and `VOICE_MARKET_MODERATION_CONTACT_URL` to a monitored HTTPS page before accepting packages. The catalog stays empty and publishing and purchases are unavailable until review is configured. Follow the [operator moderation workflow](../docs/OPERATIONS.md#content-moderation).
+
+Choose one of the supported test modes in `.env`.
+
+| Test mode | Configuration |
+| --- | --- |
+| Sandbox credits | Set `VOICE_MARKET_SANDBOX_ENABLED=1` and leave `VOICE_MARKET_SETTLEMENT_CHAIN_ID` empty. Credits stay in this service's local test ledger. |
+| Base Sepolia | Leave `VOICE_MARKET_SANDBOX_ENABLED=0` and set `VOICE_MARKET_SETTLEMENT_CHAIN_ID=84532`, `VOICE_MARKET_SETTLEMENT_ADDRESS` and `VOICE_MARKET_CHAIN_RPC` to the test settlement contract and an HTTPS RPC. Set `VOICE_MARKET_SETTLEMENT_HOLD_SECONDS` to the contract's hold period. The default is `604800` seconds. |
+
+The service starts with purchases disabled when neither mode is configured. When both are enabled, purchases use Base Sepolia and sandbox ledger routes remain enabled. Base Sepolia startup verifies the RPC chain ID, contract hold, 18-decimal token and package key version. Use a test token and a test wallet. [Voice license settlement](../contracts/README.md#voice-license-settlement)
+
+Start the service and inspect the issuer metadata.
 
 ```sh
 docker compose -f compose.voice-market.yaml up --build -d
+curl -fsS http://127.0.0.1:8793/v1/voice-issuer
 ```
 
-Set `VOICE_MARKET_SANDBOX_ENABLED=1` to enable sandbox credits and purchases. For testnet settlement, configure `VOICE_MARKET_SETTLEMENT_CHAIN_ID=84532`, `VOICE_MARKET_SETTLEMENT_ADDRESS`, an HTTPS `VOICE_MARKET_CHAIN_RPC`, and the deployed `VOICE_MARKET_SETTLEMENT_HOLD_SECONDS` (default 604800). The service checks the chain ID, contract configuration and package key version at startup. It reports the testnet policy as an overlay on the saved sandbox policy.
+Check `paymentMode` for `sandboxCredits` or `base-sepolia-test` and confirm the issuer advertises the configured moderation contact.
 
-Compose binds the host port to loopback. For remote access, set `VOICE_MARKET_PUBLIC_URL` to the HTTPS origin and use a TLS proxy. Keep the dedicated volume separate from the book node and mesh. Back up the database and `issuer.der` together. Use a consistent SQLite snapshot that includes the journal, or stop the service before copying. Verify the issuer fingerprint through a separate trusted channel before pinning it. Secure key rotation and buyer identity recovery need a separate process.
+Compose binds the host port to loopback. If the MiniMax Music 3 adapter also uses port 8793, set `VOICE_MARKET_PORT=8796` in `.env` and use 8796 in the local URL and proxy upstream. For remote access, set `VOICE_MARKET_PUBLIC_URL` to the HTTPS origin and use a TLS proxy. Keep the dedicated volume separate from the book node and mesh. Back up the database and `issuer.der` together. Use a consistent SQLite snapshot that includes the journal, or stop the service before copying. Verify the issuer fingerprint through a separate trusted channel before pinning it. Secure key rotation and buyer identity recovery need a separate process.
 
 ## Authentication and package format
 
@@ -67,7 +79,7 @@ A holder's declaration records their assertion of rights. Review the voice and d
 
 Set `VOICE_MARKET_MODERATION_CONTACT_URL` to a monitored HTTPS page and `VOICE_MARKET_ADMIN_SUBJECTS` to comma-separated reviewer fingerprints. With both set, the issuer advertises the contact. New and migrated versions enter the pending queue. Approval is required for listing and purchase. Purchasers can still view their certificates if moderation withdraws access to the underlying package.
 
-Authenticated users report an approved version with `POST /v1/voice-packages/:id/versions/:version/reports` using `reason` and optional `details`. The signed report returns a receipt ID and does not require an idempotency key. Reviewers use signed administrator requests to inspect pending content, decide cases and resolve reports. Follow the operator moderation workflow in the workspace version of `docs/OPERATIONS.md`.
+Authenticated users report an approved version with `POST /v1/voice-packages/:id/versions/:version/reports` using `reason` and optional `details`. The signed report returns a receipt ID and does not require an idempotency key. Reviewers use signed administrator requests to inspect pending content, decide cases and resolve reports. Follow the [operator moderation workflow](../docs/OPERATIONS.md#content-moderation).
 
 ## ATS app entry
 
@@ -109,3 +121,5 @@ Deploy `VoiceLicenseSettlement` with `PACKAGE_KEY_VERSION=2`. Register the resou
 ## Verification scope
 
 The previous targeted settlement check used an in-memory SQLite fixture to exercise holder-scoped registration, refund reconciliation, confirmation depth and refusal when chain checks fail. The moderation change record covers syntax checking. General concurrency, ledger migration, EIP-191 interoperability, and end-to-end moderation remain outside that record.
+
+See the [contract guide](../contracts/README.md#voice-license-settlement).

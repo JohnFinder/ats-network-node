@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Include the authenticated translation gateway, optional NVIDIA translation backend, music API and workers, and isolated Voice Market service in the standalone checkout.
+- Support sandbox credits and Base Sepolia test transactions for Voice Market. Purchases are disabled until a test mode is configured.
+- Require review for public and unlisted books and for voice packages. Existing listings enter review on upgrade. Add signed reports, reviewer tools and approval checks for federated listings.
+- Add AAC speech output and registered voice references to the speech gateway.
 - Rewrite the node documentation in English. The project overview, quickstart and component guides link to the canonical English pages. Previous localized URLs still point readers to those guides.
 
 ## 0.3.0 — 2026-10-22

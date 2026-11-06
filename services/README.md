@@ -25,6 +25,8 @@ The manifest supplies ABIs and runtime code commitments. The service takes the R
 
 The indexer fetches from pinned origins and rejects redirects. It checks confirmed metadata hashes and the publisher's original signed upload request from the pinned node. A successful retrieval with a matching full SHA-256 is required before a publication can enter the catalog. Metadata requires a confirmed publication. Catalog entries identify the source of their rankings. Node download counts describe activity at the nodes that collected them.
 
+For deployments with content moderation, the catalog also requires an approved signed origin descriptor and approved status at the pinned source. Metadata replication checks approval when serving the metadata. See the [operator moderation workflow](../docs/OPERATIONS.md#content-moderation).
+
 ### Data and recovery
 
 The SQLite WAL database holds canonical block hashes and events, metadata, dual-signature binding proofs, wallet intents, lease nonces, schedules, and audit evidence. On restart the service resumes from its cursor and checks canonical block hashes. Use encrypted, consistent snapshots that include the WAL. Restore against the explicitly configured RPC so the index can revalidate the chain.

@@ -124,6 +124,7 @@ async function route(req, res) {
   if (req.method === 'GET' && /^\/v2\/metadata\/[0-9a-f]{64}$/.test(url.pathname)) {
     const hash = url.pathname.split('/').at(-1), row = db.prepare('SELECT bytes FROM metadata WHERE hash=?').get(hash);
     if (!row || !chain.events('Published').some(e => e.contract === 'publication' && e.args.metadataHash === `0x${hash}`)) throw new Error('confirmed_metadata_not_found');
+    if (!await catalog.publicMetadata(hash, row.bytes)) throw new Error('confirmed_metadata_not_found');
     return json(res, 200, identity.envelope({ schemaVersion: 1, type: 'ats-publication-metadata-v1', metadataHash: hash, metadataBytes: row.bytes }));
   }
   if (req.method === 'GET' && url.pathname === '/v2/catalog') {

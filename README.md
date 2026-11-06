@@ -10,6 +10,9 @@ Run an independent node to store ATS `.atsbook` audiobooks, publish signed listi
 | Public storage over HTTPS | `compose.yaml` and `compose.public.yaml` | A domain, DNS and reachable ports 80 and 443 |
 | Storage and speech | `sh scripts/start-gpu-node.sh` | Linux x86_64, an NVIDIA GPU, a compatible driver and NVIDIA Container Toolkit |
 | Public storage and speech over HTTPS | `sh scripts/start-gpu-node.sh --public` | GPU and public HTTPS requirements |
+| Document translation | `sh scripts/start-translation-node.sh` | A reachable compatible upstream, or the optional Linux NVIDIA backend |
+| Music generation | `node music/server.mjs` | Node.js 24 and a configured Stable Audio or MiniMax Music 3 worker |
+| Voice Market test environment | `docker compose -f compose.voice-market.yaml up -d --build` | Reviewer configuration and opt-in sandbox credits or Base Sepolia |
 | Optional chain and operator services | `compose.services.yaml` | A reviewed chain manifest, explicit RPC, separate credentials and funding |
 
 ## Start a storage node
@@ -29,6 +32,8 @@ For an existing deployment, retain the original `.env`, credentials, Compose pro
 
 Uploads resume in 8 MiB parts across restarts. The node checks the exact size and SHA-256 digest before accepting an archive. It supports public, unlisted and private visibility, authenticates publishers with Ed25519 and persists replay protection. Search, byte-range downloads and storage quotas are built in. Nodes can exchange signed catalogs with peers whose identities they have pinned. Federation supports public replicas, source failover, repair and draining.
 
+Public and unlisted uploads require a configured reviewer and a monitored HTTPS contact. After upload, they stay in the review queue until an independent reviewer approves them. [Moderation and reporting](docs/OPERATIONS.md#content-moderation)
+
 Digests verify archive bytes. Operators must establish publication rights separately. Signed node statements and retrieval observations cannot establish that replicas occupy separate physical failure domains. Download counts do not mint tokens. The optional EVM contracts, operator services and Filecoin adapter have their own configuration and funding requirements.
 
 ## Add NVIDIA speech synthesis
@@ -41,7 +46,7 @@ sh scripts/start-gpu-node.sh
 
 For public HTTPS, configure `NODE_DOMAIN` and DNS, open ports 80 and 443, then use `sh scripts/start-gpu-node.sh --public`. The helper creates `secrets/tts_api_key` if needed and preserves an existing key. The speech gateway binds to `127.0.0.1:8791` by default. The inference engine stays on the private container network.
 
-Send `Authorization: Bearer <API key>` with speech requests. Use `GET /v1/models` to check readiness. `POST /v1/audio/speech` returns WAV audio. [GPU prerequisites and speech API](tts/README.md)
+Send `Authorization: Bearer <API key>` with speech requests. Use `GET /v1/models` to check readiness. `POST /v1/audio/speech` returns WAV or AAC audio. [GPU prerequisites and speech API](tts/README.md)
 
 ### Speech concurrency
 
@@ -57,6 +62,9 @@ The software accepts 128 concurrent requests as a configuration value. This limi
 | --- | --- |
 | `src/` | Storage API, signed mesh and wallet binding CLI |
 | `tts/` | Speech gateway, pinned GPU image, engine YAML and startup helper |
+| `translation/` | Authenticated translation gateway and upstream integration |
+| `music/` | Music job API and Python workers for Stable Audio and MiniMax Music 3 |
+| `voice-market/` | Isolated personal voice license test service |
 | `contracts/` | EVM contracts, deployment tooling and local chain |
 | `services/` | Indexer, observer, settlement integration and wallet portal |
 | `storage/` | Optional Filecoin Synapse adapter |
@@ -79,13 +87,11 @@ The software accepts 128 concurrent requests as a configuration value. This limi
 
 GitHub acceptance runs by manual workflow dispatch. Run builds, acceptance scripts and GPU experiments only when explicitly requested. Each validation record applies to the revision, workload and environment it identifies.
 
-## ATS workspace integration references
+## Optional services
 
-These guides describe modules maintained in the ATS workspace. This standalone checkout contains their documentation. Use a workspace revision that includes the corresponding service and deployment files to run them.
-
-- [Document translation](translation/README.md)
-- [Music generation](music/README.md)
-- [Voice Market test environment](voice-market/README.md)
+- The translation gateway connects to an operator-configured upstream or a private NVIDIA backend. Start it on loopback, advertise it over a trusted LAN or publish it over HTTPS. [Document translation](translation/README.md)
+- The music API runs as a separate Node.js process with a Python worker for each model you enable. Use its own HTTPS origin and ports when sharing a host. [Music generation](music/README.md)
+- Voice Market uses a separate data volume and issuer key. Enable sandbox credits or configure Base Sepolia (chain ID 84532) for test transactions. [Voice Market deployment](voice-market/README.md)
 
 ## License
 

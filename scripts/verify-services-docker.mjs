@@ -49,7 +49,7 @@ try {
   const services=run('services',`${prefix}-services`,{...env,SERVICE_PUBLIC_URL:'http://services:8790'},[...mounts,`${volume('services')}:/data`]);
   const info=await waitHTTP(services,'http://127.0.0.1:8790/health');
   docker(['rm','-f',node]);
-  const nodeRestarted=run('node',`${prefix}-node`,{NODE_PUBLIC_URL:'http://node:8787',NODE_ALLOW_PRIVATE_PEERS:'1',NODE_PROVIDER_ADDRESS:wallets[1].address,NODE_SETTLEMENT_PUBLIC_KEYS:info.serviceID},[`${nodeData}:/data`]);
+  const nodeRestarted=run('node',`${prefix}-node`,{NODE_PUBLIC_URL:'http://node:8787',NODE_ALLOW_PRIVATE_PEERS:'1',NODE_PROVIDER_ADDRESS:wallets[1].address,NODE_SETTLEMENT_PUBLIC_KEYS:info.serviceID,NODE_ADMIN_PUBLIC_KEYS:nodeInfo.providerID,NODE_MODERATION_CONTACT_URL:'https://moderation.example.invalid/'},[`${nodeData}:/data`]);
   await waitHTTP(nodeRestarted,'http://127.0.0.1:8787/v1/node');
   const operatorIntent=JSON.parse(docker(['exec',nodeRestarted,'node','src/bind-wallet.mjs','--services','http://services:8790','--wallet',wallets[1].address,'--service-id',info.serviceID,'--development-http']));
   if(operatorIntent.providerID!==nodeInfo.providerID)throw new Error('operator binding CLI identity mismatch');

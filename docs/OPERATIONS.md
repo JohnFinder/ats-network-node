@@ -26,6 +26,25 @@ Preserve the existing Compose project name, credentials, engine tuning and volum
 
 Monitor `/health`, `/v1/stats`, `/v1/mesh/status` and the service's `/v2/network` endpoint. Alert on stale synchronization, offline peers, failed copies, exhausted replica quotas, indexing lag, code hash mismatches, depleted gas and settlement retries. Synchronize host clocks. Configure request limits and abuse controls at the public edge, and redact ticket query strings and request bodies from proxy logs.
 
+## Content moderation
+
+Enable review for public and unlisted books by setting `NODE_MODERATION_CONTACT_URL` to a monitored HTTPS page and setting `NODE_ADMIN_PUBLIC_KEYS` to the SHA-256 fingerprints of separate Ed25519 reviewer keys. The Voice Market equivalents are `VOICE_MARKET_MODERATION_CONTACT_URL` and `VOICE_MARKET_ADMIN_SUBJECTS`. Keep reviewer private keys on the review workstation. Without the review configuration, the service hides the public catalog and declines new public submissions. Private book transfers retain their existing access controls.
+
+### Review a submission
+
+1. Set `ATS_MODERATION_PRIVATE_KEY_FILE` to the path of an Ed25519 private key in PEM format. From the node checkout, run `node scripts/moderation.mjs subject` to display its fingerprint.
+2. Run `node scripts/moderation.mjs https://YOUR_NODE GET /v1/moderation/queue` to list pending submissions. For the next page, use `'/v1/moderation/queue?offset=100'` as the route argument.
+3. Use the same signed GET command with `/v1/resources/BOOK_ID/download` for a quarantined book, or with `/v1/voice-packages/PACKAGE_ID/versions/VERSION/content` for a quarantined voice package. Redirect the response to a file in the secure review workspace. Inspect the metadata, complete document or recording, associated audio, and documented distribution rights in an isolated environment. For a voice package, also inspect its preview, transcripts and terms. If an encrypted book cannot be inspected, request the key through the operator's secure intake or reject the submission. Keep keys out of decision and report records.
+4. Save the decision in a JSON file, for example `{"status":"approved","inspectedContent":true,"details":"Reviewed the document, audio and distribution rights."}`. For a book, send it with `node scripts/moderation.mjs https://YOUR_NODE POST /v1/moderation/resources/BOOK_ID DECISION.json`. For a voice package, use `/v1/moderation/voice-packages/PACKAGE_ID/versions/VERSION`. Set `status` to `rejected` with a reason to reject a pending submission, or `removed` with a reason to withdraw an approved listing.
+
+Publishers cannot approve their own submissions. Existing listings enter the review queue when upgraded. Owners and authorized reviewers can still access withdrawn content for incident handling and retention. Marketplace buyers keep their license records, with downloads of the withdrawn package disabled.
+
+### Handle a report
+
+Staff the contact page and poll signed `GET /v1/moderation/reports` throughout each day. Review and act on actionable reports within 24 hours. Resolve a report with `POST /v1/moderation/reports/REPORT_ID/resolve` and a JSON file containing a `details` string that records the action. If the report warrants withdrawal, apply the separate removal decision before resolving it.
+
+For a federated book, include its `originProviderID` in the removal decision to withdraw the local listing and replica route. Notify the origin operator so they can withdraw their copy and propagate the tombstone. Cached federation and chain index metadata may remain visible until their freshness windows expire. Previously saved copies and immutable chain records persist independently.
+
 ## Chain and spending
 
 Use a reviewed chain and RPC for V2 deployments. Inject the deployer secret through `ATS_DEPLOYER_PRIVATE_KEY` using the operator's secret manager. Mount separate keys for observers and coordinators. Indexers verify the chain ID, addresses, deployment height and runtime bytecode against the manifest. Give each observer an independently controlled funded wallet, separate volume and configured committee role. Providers cannot act as their own observers. Committee members remain trusted to report their observations accurately.

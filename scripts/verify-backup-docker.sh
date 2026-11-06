@@ -6,6 +6,10 @@ SCRIPT_ROOT="$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)"
 cd "$SCRIPT_ROOT"
 export NODE_PORT="${VERIFY_BACKUP_PORT:-18793}" NODE_PUBLIC_URL="http://127.0.0.1:${VERIFY_BACKUP_PORT:-18793}"
 export NODE_URL="$NODE_PUBLIC_URL" VERIFY_STATE="$TASK_WORK/state.json"
+export ATS_MODERATION_PRIVATE_KEY_FILE="$TASK_WORK/moderator.pem"
+(umask 077; openssl genpkey -algorithm ED25519 -out "$ATS_MODERATION_PRIVATE_KEY_FILE")
+export NODE_ADMIN_PUBLIC_KEYS="$(node scripts/moderation.mjs subject)"
+export NODE_MODERATION_CONTACT_URL="https://moderation.example.invalid/"
 TASK_VOLUME="${TASK_PROJECT}_restored"
 compose() { docker compose -p "$TASK_PROJECT" -f compose.yaml "$@"; }
 finish() { result=$?; docker rm -f "${TASK_PROJECT}-restored" >/dev/null 2>&1 || true; compose down -v --remove-orphans >/dev/null; docker volume rm "$TASK_VOLUME" >/dev/null 2>&1 || true; rm -rf "$TASK_WORK"; exit "$result"; }
@@ -23,7 +27,7 @@ scripts/volume-backup.sh "${TASK_PROJECT}_node-data" "$TASK_WORK/node.tar.gz" --
 docker volume create "$TASK_VOLUME" >/dev/null
 scripts/volume-restore.sh "$TASK_VOLUME" "$TASK_WORK/node.tar.gz" --plaintext-development
 compose down
-docker run -d --name "${TASK_PROJECT}-restored" -p "127.0.0.1:$NODE_PORT:8787" -e "NODE_PUBLIC_URL=$NODE_PUBLIC_URL" --mount "type=volume,source=$TASK_VOLUME,target=/data" "$TASK_IMAGE" >/dev/null
+docker run -d --name "${TASK_PROJECT}-restored" -p "127.0.0.1:$NODE_PORT:8787" -e NODE_PUBLIC_URL -e NODE_ADMIN_PUBLIC_KEYS -e NODE_MODERATION_CONTACT_URL --mount "type=volume,source=$TASK_VOLUME,target=/data" "$TASK_IMAGE" >/dev/null
 node --input-type=module <<'JS'
 import fs from 'node:fs';import assert from 'node:assert/strict';import {createHash} from 'node:crypto';
 const state=JSON.parse(fs.readFileSync(process.env.VERIFY_STATE));let node;
